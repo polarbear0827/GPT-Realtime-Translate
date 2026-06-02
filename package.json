@@ -1,0 +1,12 @@
+{
+  "name": "keynote-live-translator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "check": "node --check server/index.mjs && node --check public/app.js",
+    "build:app": "zsh scripts/build-app.sh",
+    "build:pkg": "zsh scripts/build-pkg.sh"
+  }
+}

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keynote Live Translator</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="control-bar" id="controlBar">
+        <div class="brand">
+          <span class="status-dot" id="statusDot"></span>
+          <div>
+            <h1>Keynote Live Translator</h1>
+            <p id="statusLine">Idle · Key Missing · 0 segments</p>
+          </div>
+        </div>
+
+        <div class="control-groups">
+          <div class="control-group primary-actions">
+            <button id="openKeyBtn">金鑰</button>
+            <button id="startBtn" class="primary">Start</button>
+            <button id="stopBtn">Stop</button>
+            <button id="recordBtn" class="active">Record</button>
+            <select id="captionModeSelect" aria-label="字幕模式">
+              <option value="bilingual">雙語字幕</option>
+              <option value="zh">純繁中翻譯</option>
+              <option value="en">純英文字幕</option>
+            </select>
+            <select id="exportSelect" aria-label="Export transcript">
+              <option value="">Export</option>
+              <option value="md">Markdown</option>
+              <option value="txt">Text</option>
+              <option value="json">JSON</option>
+              <option value="srt-zh">SRT 繁中</option>
+              <option value="srt-en">SRT English</option>
+              <option value="srt-bilingual">SRT 雙語</option>
+            </select>
+            <button id="fullscreenBtn">Fullscreen</button>
+          </div>
+          <details class="control-details help-details" open>
+            <summary>使用步驟</summary>
+            <ol>
+              <li>按「金鑰」貼上 OpenAI API key。</li>
+              <li>按「Start」開始收音與翻譯。</li>
+              <li>需要影片字幕時，用「Export」輸出 SRT。</li>
+            </ol>
+          </details>
+          <details class="control-details">
+            <summary>進階設定</summary>
+            <div class="control-group advanced-controls">
+              <label>Mic <select id="micSelect"><option value="">Default</option></select></label>
+              <label>EN 字體 <input id="sourceFont" type="range" min="24" max="92" value="48" /></label>
+              <label>ZH 字體 <input id="translatedFont" type="range" min="28" max="110" value="62" /></label>
+              <button id="pauseBtn">Pause Display</button>
+              <button id="audioBtn">Audio</button>
+              <button id="micTestBtn">測試麥克風</button>
+              <button id="markBtn">Mark Paragraph</button>
+              <button id="clearCaptionsBtn">Clear Captions</button>
+              <button id="clearTranscriptBtn">Clear Transcript</button>
+              <button id="clearKeyBtn">清除金鑰</button>
+            </div>
+          </details>
+        </div>
+      </header>
+
+      <div class="error-banner" id="errorBanner" hidden></div>
+
+      <main class="caption-layout" id="captionLayout">
+        <section class="caption-pane">
+          <header class="pane-header"><span>Original</span><strong>English</strong></header>
+          <div class="caption-text" id="sourceCaption"><span class="placeholder">等待語音輸入...</span></div>
+        </section>
+        <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"><span></span></div>
+        <section class="caption-pane caption-pane-emphasis">
+          <header class="pane-header"><span>翻譯</span><strong>繁體中文</strong></header>
+          <div class="caption-text" id="translatedCaption"><span class="placeholder">等待翻譯...</span></div>
+        </section>
+      </main>
+
+      <aside class="transcript-panel" id="transcriptPanel">
+        <button class="panel-tab" id="transcriptToggle">Transcript</button>
+        <div class="transcript-scroll" id="transcriptScroll">
+          <p class="placeholder compact">逐字稿會在開始 Record 後出現在這裡。</p>
+        </div>
+      </aside>
+    </div>
+
+    <div class="modal-backdrop" id="keyModal">
+      <form class="modal" id="keyForm">
+        <div>
+          <p class="eyebrow">Local secure session</p>
+          <h2>輸入 OpenAI API key</h2>
+          <p class="modal-copy">
+            金鑰只會送到本機後端並存在記憶體，用來換短效 Realtime token；不會寫入檔案、瀏覽器儲存或日誌。
+          </p>
+        </div>
+        <label class="field">
+          <span>API key</span>
+          <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="error-text" id="keyError" hidden></p>
+        <div class="modal-actions">
+          <button type="submit" class="primary">儲存金鑰</button>
+          <button type="button" id="closeModalBtn">稍後再說</button>
+        </div>
+      </form>
+    </div>
+
+    <script src="/vendor/opencc-cn2t.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
