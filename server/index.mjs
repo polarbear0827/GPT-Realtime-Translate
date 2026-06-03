@@ -7,7 +7,11 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = normalize(join(__dirname, ".."));
 const publicDir = join(root, "public");
 const port = Number(process.env.PORT || 8787);
+const appVersion = process.env.APP_VERSION || "0.2.0";
 let apiKey = null;
+
+const translationOutputLanguages = new Set(["es", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "vi", "it", "en"]);
+const transcriptionLanguages = new Set(["en", "zh"]);
 
 const securityHeaders = {
   "Content-Security-Policy":
@@ -38,7 +42,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.url === "/api/health" && req.method === "GET") {
-      sendJson(res, 200, { ok: true, hasApiKey: Boolean(apiKey) });
+      sendJson(res, 200, { ok: true, version: appVersion, hasApiKey: Boolean(apiKey) });
       return;
     }
 
@@ -68,6 +72,10 @@ const server = createServer(async (req, res) => {
 
       const body = await readJson(req, 8_192);
       const targetLanguage = typeof body.targetLanguage === "string" ? body.targetLanguage : "zh";
+      if (!translationOutputLanguages.has(targetLanguage)) {
+        sendJson(res, 400, { error: "Unsupported translation target language." });
+        return;
+      }
       const safetyIdentifier =
         typeof body.safetyIdentifier === "string" && body.safetyIdentifier.length <= 80
           ? body.safetyIdentifier
@@ -114,6 +122,11 @@ const server = createServer(async (req, res) => {
 
       const body = await readJson(req, 8_192);
       const delay = typeof body.delay === "string" ? body.delay : "low";
+      const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage : "en";
+      if (!transcriptionLanguages.has(sourceLanguage)) {
+        sendJson(res, 400, { error: "Unsupported transcription source language." });
+        return;
+      }
       const safetyIdentifier =
         typeof body.safetyIdentifier === "string" && body.safetyIdentifier.length <= 80
           ? body.safetyIdentifier
@@ -142,7 +155,7 @@ const server = createServer(async (req, res) => {
                   },
                   transcription: {
                     model: "gpt-realtime-whisper",
-                    language: "en",
+                    language: sourceLanguage,
                     delay,
                   },
                   noise_reduction: {

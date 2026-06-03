@@ -30,7 +30,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          NOTES_FILE="RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            NOTES_FILE="CHANGELOG.md"
+          fi
           gh release create "$GITHUB_REF_NAME" \
-            build/KeynoteLiveTranslator-*.pkg \
+            build/v*/KeynoteLiveTranslator-*.pkg \
             --title "$GITHUB_REF_NAME" \
-            --notes-file RELEASE_NOTES_v0.1.0.md
+            --notes-file "$NOTES_FILE"

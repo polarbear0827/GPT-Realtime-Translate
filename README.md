@@ -17,8 +17,14 @@ The app uses OpenAI Realtime models:
 
 - Three caption modes:
   - Bilingual captions.
-  - Traditional Chinese translation only.
-  - English captions only.
+  - Translation only.
+  - Source captions only.
+- Source caption language selector:
+  - English.
+  - Chinese.
+- Translation target language selector:
+  - Traditional Chinese.
+  - English.
 - Resizable subtitle layout.
 - Adjustable English and Chinese font sizes.
 - Auto-scroll captions to the latest text.
@@ -42,7 +48,7 @@ This project is designed for live presentation use where API key handling must s
 - The API key is not written to files.
 - The API key is not stored in browser localStorage/sessionStorage.
 - The API key is exchanged for short-lived Realtime client secrets.
-- The browser connects to OpenAI with short-lived client secrets, not the long-lived API key.
+- The desktop window connects to OpenAI with short-lived client secrets, not the long-lived API key.
 - Static files are served with restrictive security headers.
 
 Do not commit API keys, `.env` files, logs, or exported transcripts that contain private content.
@@ -50,7 +56,7 @@ Do not commit API keys, `.env` files, logs, or exported transcripts that contain
 ## Installation From GitHub Releases
 
 1. Go to the GitHub Releases page for this repository.
-2. Download `KeynoteLiveTranslator-0.1.0.pkg`.
+2. Download `KeynoteLiveTranslator-0.2.0.pkg`.
 3. Open the `.pkg` file.
 4. Follow the installer steps. The app will be installed to `/Applications`.
 5. Open `Keynote Live Translator` from `/Applications`.
@@ -66,16 +72,22 @@ If macOS blocks the app because it is not notarized yet:
 ## First Run
 
 1. Open `Keynote Live Translator`.
-2. The app opens a local browser UI at `http://127.0.0.1:8787/`.
+2. The app opens its own desktop window.
 3. Click `輸入金鑰`.
 4. Paste your OpenAI API key.
 5. Choose a caption mode:
    - `雙語字幕`
-   - `純繁中翻譯`
-   - `純英文字幕`
-6. Open `進階設定`.
-7. Click `測試麥克風`.
-8. If the microphone test succeeds, click `Start`.
+   - `只顯示翻譯`
+   - `只顯示原文`
+6. Choose source caption language:
+   - `English`
+   - `中文`
+7. Choose translation target language:
+   - `繁體中文`
+   - `English`
+8. Open `進階設定`.
+9. Click `測試麥克風`.
+10. If the microphone test succeeds, click `Start`.
 
 ## Recommended Keynote Setup
 
@@ -85,7 +97,7 @@ Before going on stage:
 2. Open the app.
 3. Paste the OpenAI API key.
 4. Select `雙語字幕` for English + Traditional Chinese.
-5. Use `測試麥克風` to confirm browser and macOS permissions.
+5. Use `測試麥克風` to confirm macOS microphone permission.
 6. Speak for 10-20 seconds and verify:
    - English appears in the top caption area.
    - Traditional Chinese appears in the bottom caption area.
@@ -99,22 +111,22 @@ Before going on stage:
 
 Runs both realtime tracks:
 
-- `gpt-realtime-whisper` creates English source captions.
-- `gpt-realtime-translate` creates Traditional Chinese translation.
+- `gpt-realtime-whisper` creates source-language captions.
+- `gpt-realtime-translate` creates target-language translation.
 
 This mode is best for live audience subtitles and post-event video editing.
 
-### Traditional Chinese Only
+### Translation Only
 
 Runs only `gpt-realtime-translate`.
 
-This mode is cheaper than bilingual mode and keeps the display focused on translated Chinese.
+This mode is cheaper than bilingual mode and keeps the display focused on the selected translation target language.
 
-### English Only
+### Source Only
 
 Runs only `gpt-realtime-whisper`.
 
-This mode is useful when you only need English source captions or want a clean English transcript.
+This mode is useful when you only need source captions or want a clean source-language transcript.
 
 ## Exporting Transcripts And SRT
 
@@ -131,18 +143,17 @@ For video editing, use one of the SRT formats.
 
 ## Microphone Permissions
 
-The app opens a localhost browser UI. Microphone permission is controlled by the browser and macOS.
+The app opens a real macOS desktop window. Microphone permission is controlled by macOS for `Keynote Live Translator`.
 
 If you see a permission error:
 
-1. In the browser, allow microphone access for `127.0.0.1`.
-2. On macOS, open `系統設定 > 隱私權與安全性 > 麥克風`.
-3. Enable microphone access for the browser you are using.
-4. Reload the page.
-5. Click `測試麥克風`.
-6. Click `Start` again.
+1. On macOS, open `系統設定 > 隱私權與安全性 > 麥克風`.
+2. Enable microphone access for `Keynote Live Translator`.
+3. Restart the app.
+4. Click `測試麥克風`.
+5. Click `Start` again.
 
-If the microphone is still unavailable, close other apps that may be using the microphone, such as conferencing apps, recording tools, or browser tabs.
+If the microphone is still unavailable, close other apps that may be using the microphone, such as conferencing apps or recording tools.
 
 ## Local Development
 
@@ -187,9 +198,9 @@ The generated files are placed in `build/`.
 
 The `.app` contains:
 
-- A small shell launcher.
+- A Swift AppKit/WKWebView desktop launcher.
 - The local Node.js server.
-- The static browser UI.
+- The static responsive UI.
 - A bundled Node.js runtime copied from the build machine.
 
 The `.pkg` installs the `.app` into `/Applications`.
@@ -200,9 +211,9 @@ This first release uses an ad-hoc local signature. For public distribution outsi
 
 This repository uses semantic versioning.
 
-- Current version: `0.1.0`.
+- Current version: `0.2.0`.
 - Version source: `package.json` and `VERSION`.
-- Release notes: `RELEASE_NOTES_v0.1.0.md`.
+- Release notes: `RELEASE_NOTES_v0.2.0.md`.
 - Changelog: `CHANGELOG.md`.
 
 Release flow:
@@ -212,7 +223,7 @@ Release flow:
 3. Update `CHANGELOG.md`.
 4. Add release notes for the new version.
 5. Build the `.pkg`.
-6. Tag the release, for example `v0.1.0`.
+6. Tag the release, for example `v0.2.0`.
 7. Upload the `.pkg` to GitHub Releases.
 
 ## Troubleshooting

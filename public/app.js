@@ -1,10 +1,27 @@
+const LANGUAGES = {
+  en: {
+    label: "English",
+    transcriptLabel: "EN",
+    sourcePlaceholder: "Waiting for speech...",
+    translationPlaceholder: "Waiting for translation...",
+  },
+  zh: {
+    label: "繁體中文",
+    transcriptLabel: "ZH",
+    sourcePlaceholder: "等待語音輸入...",
+    translationPlaceholder: "等待翻譯...",
+  },
+};
+
 const state = {
   status: "idle",
   hasApiKey: false,
   recording: true,
   paused: false,
   playAudio: false,
-  captionMode: window.localStorage.getItem("keynote:captionMode") || "bilingual",
+  captionMode: normalizeCaptionMode(window.localStorage.getItem("keynote:captionMode") || "bilingual"),
+  sourceLanguage: window.localStorage.getItem("keynote:sourceLanguage") || "en",
+  targetLanguage: window.localStorage.getItem("keynote:targetLanguage") || "zh",
   sourceText: "",
   translatedText: "",
   splitRatio: readNumber("splitRatio", 0.48),
@@ -39,6 +56,8 @@ const els = {
   stopBtn: byId("stopBtn"),
   recordBtn: byId("recordBtn"),
   captionModeSelect: byId("captionModeSelect"),
+  sourceLanguageSelect: byId("sourceLanguageSelect"),
+  targetLanguageSelect: byId("targetLanguageSelect"),
   pauseBtn: byId("pauseBtn"),
   audioBtn: byId("audioBtn"),
   micTestBtn: byId("micTestBtn"),
@@ -54,6 +73,8 @@ const els = {
   captionLayout: byId("captionLayout"),
   sourceCaption: byId("sourceCaption"),
   translatedCaption: byId("translatedCaption"),
+  sourceLanguageLabel: byId("sourceLanguageLabel"),
+  targetLanguageLabel: byId("targetLanguageLabel"),
   splitter: byId("splitter"),
   transcriptPanel: byId("transcriptPanel"),
   transcriptToggle: byId("transcriptToggle"),
@@ -69,8 +90,11 @@ init();
 
 async function init() {
   initTraditionalConverter();
-  if (!["bilingual", "zh", "en"].includes(state.captionMode)) state.captionMode = "bilingual";
+  if (!LANGUAGES[state.sourceLanguage]) state.sourceLanguage = "en";
+  if (!LANGUAGES[state.targetLanguage]) state.targetLanguage = "zh";
   els.captionModeSelect.value = state.captionMode;
+  els.sourceLanguageSelect.value = state.sourceLanguage;
+  els.targetLanguageSelect.value = state.targetLanguage;
   els.sourceFont.value = String(state.sourceFontSize);
   els.translatedFont.value = String(state.translatedFontSize);
   applyLayoutSettings();
@@ -98,9 +122,19 @@ function bindEvents() {
     render();
   });
   els.captionModeSelect.addEventListener("change", () => {
-    state.captionMode = els.captionModeSelect.value;
+    state.captionMode = normalizeCaptionMode(els.captionModeSelect.value);
     window.localStorage.setItem("keynote:captionMode", state.captionMode);
     applyLayoutSettings();
+    render();
+  });
+  els.sourceLanguageSelect.addEventListener("change", () => {
+    state.sourceLanguage = els.sourceLanguageSelect.value;
+    window.localStorage.setItem("keynote:sourceLanguage", state.sourceLanguage);
+    render();
+  });
+  els.targetLanguageSelect.addEventListener("change", () => {
+    state.targetLanguage = els.targetLanguageSelect.value;
+    window.localStorage.setItem("keynote:targetLanguage", state.targetLanguage);
     render();
   });
   els.pauseBtn.addEventListener("click", () => {
@@ -270,8 +304,11 @@ async function startRealtime() {
   renderTranscript();
 
   try {
-    const needsTranslation = state.captionMode !== "en";
-    const needsTranscription = state.captionMode !== "zh";
+    const needsTranslation = state.captionMode !== "source";
+    const needsTranscription = state.captionMode !== "translation";
+    if (needsTranslation && state.sourceLanguage === state.targetLanguage) {
+      showInfo("原文與翻譯目標語言相同時，Realtime Translate 可能不輸出翻譯；若只要字幕，建議改用「只顯示原文」。");
+    }
     setStatus("creating-token");
     const [translationClientSecret, transcriptionClientSecret] = await Promise.all([
       needsTranslation ? createTranslationClientSecret() : Promise.resolve(null),
@@ -376,7 +413,7 @@ async function createTranslationClientSecret() {
   const response = await fetch("/api/realtime/translation-client-secret", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetLanguage: "zh", safetyIdentifier: "local-keynote-user" }),
+    body: JSON.stringify({ targetLanguage: state.targetLanguage, safetyIdentifier: "local-keynote-user" }),
   });
   const payload = await response.json();
   if (!response.ok) {
@@ -392,7 +429,11 @@ async function createTranscriptionClientSecret() {
   const response = await fetch("/api/realtime/transcription-client-secret", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ delay: "low", safetyIdentifier: "local-keynote-user" }),
+    body: JSON.stringify({
+      delay: "low",
+      sourceLanguage: state.sourceLanguage,
+      safetyIdentifier: "local-keynote-user",
+    }),
   });
   const payload = await response.json();
   if (!response.ok) {
@@ -423,7 +464,7 @@ async function startRealtimeTranscription(clientSecret, stream) {
             audio: {
               input: {
                 format: { type: "audio/pcm", rate: 24000 },
-                transcription: { model: "gpt-realtime-whisper", language: "en", delay: "low" },
+                transcription: { model: "gpt-realtime-whisper", language: state.sourceLanguage, delay: "low" },
                 noise_reduction: { type: "near_field" },
                 turn_detection: null,
               },
@@ -529,19 +570,21 @@ function handleTranscriptionMessage(data) {
   try {
     const event = JSON.parse(data);
     if (event.type === "conversation.item.input_audio_transcription.delta" && event.delta) {
-      updateTranscriptionItem(event.item_id || "live", event.delta, false);
+      const delta = normalizeCaptionText(event.delta, state.sourceLanguage);
+      updateTranscriptionItem(event.item_id || "live", delta, false);
       if (state.recording) {
         const segment = currentSegment();
-        segment.sourceText = replaceOrAppendTranscript(segment.sourceText, event.delta);
+        segment.sourceText = replaceOrAppendTranscript(segment.sourceText, delta);
         touchSegment();
       }
       return;
     }
     if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
-      updateTranscriptionItem(event.item_id || crypto.randomUUID(), event.transcript, true);
+      const transcript = normalizeCaptionText(event.transcript, state.sourceLanguage);
+      updateTranscriptionItem(event.item_id || crypto.randomUUID(), transcript, true);
       if (state.recording) {
         const segment = currentSegment();
-        segment.sourceText = state.sourceText || event.transcript;
+        segment.sourceText = state.sourceText || transcript;
         touchSegment();
       }
       return;
@@ -571,10 +614,10 @@ function handleRealtimeMessage(data) {
     const sourceDelta = extractTranscriptText(event, "input");
     const translationDelta = extractTranscriptText(event, "output");
     if (sourceDelta && !state.transcriptionWs) {
-      appendSource(sourceDelta);
+      appendSource(normalizeCaptionText(sourceDelta, state.sourceLanguage));
     }
     if (translationDelta) {
-      appendTranslation(toTraditionalChinese(translationDelta));
+      appendTranslation(normalizeCaptionText(translationDelta, state.targetLanguage));
     }
     if (!sourceDelta && !translationDelta && event.type === "error") {
       showError(event.error?.message || "Realtime API returned an error.");
@@ -618,25 +661,27 @@ function replaceOrAppendTranscript(currentText, incomingText) {
 }
 
 function appendSource(delta) {
+  const text = normalizeCaptionText(delta, state.sourceLanguage);
   if (!state.paused) {
-    state.sourceText = trimLiveText(replaceOrAppendTranscript(state.sourceText, delta));
+    state.sourceText = trimLiveText(replaceOrAppendTranscript(state.sourceText, text));
     renderCaptions();
   }
   if (state.recording) {
     const segment = currentSegment();
-    segment.sourceText = replaceOrAppendTranscript(segment.sourceText, delta);
+    segment.sourceText = replaceOrAppendTranscript(segment.sourceText, text);
     touchSegment();
   }
 }
 
 function appendTranslation(delta) {
+  const text = normalizeCaptionText(delta, state.targetLanguage);
   if (!state.paused) {
-    state.translatedText = trimLiveText(replaceOrAppendTranscript(state.translatedText, delta));
+    state.translatedText = trimLiveText(replaceOrAppendTranscript(state.translatedText, text));
     renderCaptions();
   }
   if (state.recording) {
     const segment = currentSegment();
-    segment.translatedText = replaceOrAppendTranscript(segment.translatedText, delta);
+    segment.translatedText = replaceOrAppendTranscript(segment.translatedText, text);
     touchSegment();
   }
 }
@@ -649,8 +694,8 @@ function currentSegment() {
       index: state.nextSegmentIndex++,
       startedAtMs: Math.max(0, now),
       endedAtMs: Math.max(0, now + 800),
-      sourceLanguage: "en",
-      targetLanguage: "zh-TW",
+      sourceLanguage: state.sourceLanguage,
+      targetLanguage: state.targetLanguage,
       sourceText: "",
       translatedText: "",
       status: "streaming",
@@ -721,8 +766,12 @@ function exportTranscript(format) {
   if (format === "md") downloadFile(`keynote-transcript-${stamp}.md`, exportMarkdown(state.segments), "text/markdown;charset=utf-8");
   if (format === "txt") downloadFile(`keynote-transcript-${stamp}.txt`, exportText(state.segments));
   if (format === "json") downloadFile(`keynote-transcript-${stamp}.json`, exportJson(state.segments), "application/json;charset=utf-8");
-  if (format === "srt-zh") downloadFile(`keynote-subtitles-zh-TW-${stamp}.srt`, exportSrt(state.segments, "zh-TW"));
-  if (format === "srt-en") downloadFile(`keynote-subtitles-en-${stamp}.srt`, exportSrt(state.segments, "en"));
+  if (format === "srt-zh" || format === "srt-translation") {
+    downloadFile(`keynote-subtitles-${state.targetLanguage}-${stamp}.srt`, exportSrt(state.segments, "translation"));
+  }
+  if (format === "srt-en" || format === "srt-source") {
+    downloadFile(`keynote-subtitles-${state.sourceLanguage}-${stamp}.srt`, exportSrt(state.segments, "source"));
+  }
   if (format === "srt-bilingual") {
     downloadFile(`keynote-subtitles-bilingual-${stamp}.srt`, exportSrt(state.segments, "bilingual"));
   }
@@ -731,7 +780,11 @@ function exportTranscript(format) {
 function exportText(segments) {
   return segments
     .filter(hasContent)
-    .map((segment) => `[${formatClock(segment.startedAtMs)} - ${formatClock(segment.endedAtMs)}]\nEN ${segment.sourceText}\nZH ${segment.translatedText}`)
+    .map((segment) => {
+      const sourceLabel = languageMeta(segment.sourceLanguage).transcriptLabel;
+      const targetLabel = languageMeta(segment.targetLanguage).transcriptLabel;
+      return `[${formatClock(segment.startedAtMs)} - ${formatClock(segment.endedAtMs)}]\n${sourceLabel} ${segment.sourceText}\n${targetLabel} ${segment.translatedText}`;
+    })
     .join("\n\n");
 }
 
@@ -742,11 +795,11 @@ function exportMarkdown(segments) {
     ...segments.filter(hasContent).flatMap((segment) => [
       `## ${formatClock(segment.startedAtMs)} -> ${formatClock(segment.endedAtMs)}`,
       "",
-      "**EN**",
+      `**${languageMeta(segment.sourceLanguage).label}**`,
       "",
       segment.sourceText || "_(empty)_",
       "",
-      "**繁中**",
+      `**${languageMeta(segment.targetLanguage).label}**`,
       "",
       segment.translatedText || "_(empty)_",
       "",
@@ -769,9 +822,14 @@ function exportSrt(segments, mode) {
 }
 
 function srtBody(segment, mode) {
-  if (mode === "en") return wrapLines(segment.sourceText, 42);
-  if (mode === "zh-TW") return wrapLines(segment.translatedText, 24);
-  return [wrapLines(segment.sourceText, 42), wrapLines(segment.translatedText, 24)].filter(Boolean).join("\n");
+  if (mode === "source") return wrapLines(segment.sourceText, lineLimitForLanguage(segment.sourceLanguage));
+  if (mode === "translation") return wrapLines(segment.translatedText, lineLimitForLanguage(segment.targetLanguage));
+  return [
+    wrapLines(segment.sourceText, lineLimitForLanguage(segment.sourceLanguage)),
+    wrapLines(segment.translatedText, lineLimitForLanguage(segment.targetLanguage)),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function downloadFile(filename, contents, type = "text/plain;charset=utf-8") {
@@ -797,6 +855,8 @@ function render() {
   els.startBtn.disabled = !state.hasApiKey || ["live", "creating-token", "connecting", "requesting-microphone"].includes(state.status);
   els.stopBtn.disabled = !["live", "creating-token", "connecting", "requesting-microphone"].includes(state.status);
   els.captionModeSelect.disabled = !["idle", "stopped", "error"].includes(state.status);
+  els.sourceLanguageSelect.disabled = !["idle", "stopped", "error"].includes(state.status);
+  els.targetLanguageSelect.disabled = !["idle", "stopped", "error"].includes(state.status);
   els.openKeyBtn.textContent = state.hasApiKey ? "更換金鑰" : "輸入金鑰";
 }
 
@@ -808,8 +868,10 @@ function renderStatus() {
 function renderCaptions() {
   els.sourceCaption.innerHTML = "";
   els.translatedCaption.innerHTML = "";
-  els.sourceCaption.append(state.sourceText || placeholder("等待語音輸入..."));
-  els.translatedCaption.append(state.translatedText || placeholder("等待翻譯..."));
+  els.sourceLanguageLabel.textContent = languageMeta(state.sourceLanguage).label;
+  els.targetLanguageLabel.textContent = languageMeta(state.targetLanguage).label;
+  els.sourceCaption.append(state.sourceText || placeholder(languageMeta(state.sourceLanguage).sourcePlaceholder));
+  els.translatedCaption.append(state.translatedText || placeholder(languageMeta(state.targetLanguage).translationPlaceholder));
   scrollCaptionToBottom(els.sourceCaption);
   scrollCaptionToBottom(els.translatedCaption);
 }
@@ -829,10 +891,10 @@ function renderTranscript() {
     article.className = segment.status === "streaming" ? "segment streaming" : "segment";
     article.innerHTML = `<time>${formatClock(segment.startedAtMs)} → ${formatClock(segment.endedAtMs)}</time>`;
     const source = document.createElement("p");
-    source.innerHTML = "<strong>EN</strong> ";
+    source.innerHTML = `<strong>${languageMeta(segment.sourceLanguage).transcriptLabel}</strong> `;
     source.append(segment.sourceText);
     const translated = document.createElement("p");
-    translated.innerHTML = "<strong>ZH</strong> ";
+    translated.innerHTML = `<strong>${languageMeta(segment.targetLanguage).transcriptLabel}</strong> `;
     translated.append(segment.translatedText);
     article.append(source, translated);
     els.transcriptScroll.append(article);
@@ -909,7 +971,26 @@ function hasContent(segment) {
 }
 
 function normalizeTranscriptText(text) {
-  return toTraditionalChinese(text).replace(/\s+/g, " ").replace(/\s+([,.!?;:，。！？；：])/g, "$1").trim();
+  return text.replace(/\s+/g, " ").replace(/\s+([,.!?;:，。！？；：])/g, "$1").trim();
+}
+
+function normalizeCaptionText(text, language) {
+  const converted = language === "zh" ? toTraditionalChinese(text) : text;
+  return converted.replace(/\s+/g, " ");
+}
+
+function languageMeta(language) {
+  return LANGUAGES[language] || LANGUAGES.en;
+}
+
+function lineLimitForLanguage(language) {
+  return language === "zh" ? 24 : 42;
+}
+
+function normalizeCaptionMode(mode) {
+  if (mode === "en") return "source";
+  if (mode === "zh") return "translation";
+  return ["bilingual", "source", "translation"].includes(mode) ? mode : "bilingual";
 }
 
 function trimLiveText(text) {

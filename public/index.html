@@ -25,16 +25,28 @@
             <button id="recordBtn" class="active">Record</button>
             <select id="captionModeSelect" aria-label="字幕模式">
               <option value="bilingual">雙語字幕</option>
-              <option value="zh">純繁中翻譯</option>
-              <option value="en">純英文字幕</option>
+              <option value="translation">只顯示翻譯</option>
+              <option value="source">只顯示原文</option>
             </select>
+            <label class="compact-select">原文
+              <select id="sourceLanguageSelect" aria-label="原文字幕語言">
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+            </label>
+            <label class="compact-select">翻譯
+              <select id="targetLanguageSelect" aria-label="翻譯目標語言">
+                <option value="zh">繁體中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
             <select id="exportSelect" aria-label="Export transcript">
               <option value="">Export</option>
               <option value="md">Markdown</option>
               <option value="txt">Text</option>
               <option value="json">JSON</option>
-              <option value="srt-zh">SRT 繁中</option>
-              <option value="srt-en">SRT English</option>
+              <option value="srt-translation">SRT 翻譯</option>
+              <option value="srt-source">SRT 原文</option>
               <option value="srt-bilingual">SRT 雙語</option>
             </select>
             <button id="fullscreenBtn">Fullscreen</button>
@@ -43,7 +55,7 @@
             <summary>使用步驟</summary>
             <ol>
               <li>按「金鑰」貼上 OpenAI API key。</li>
-              <li>按「Start」開始收音與翻譯。</li>
+              <li>選擇原文與翻譯語言後按「Start」。</li>
               <li>需要影片字幕時，用「Export」輸出 SRT。</li>
             </ol>
           </details>
@@ -69,12 +81,12 @@
 
       <main class="caption-layout" id="captionLayout">
         <section class="caption-pane">
-          <header class="pane-header"><span>Original</span><strong>English</strong></header>
+          <header class="pane-header"><span>Original</span><strong id="sourceLanguageLabel">English</strong></header>
           <div class="caption-text" id="sourceCaption"><span class="placeholder">等待語音輸入...</span></div>
         </section>
         <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"><span></span></div>
         <section class="caption-pane caption-pane-emphasis">
-          <header class="pane-header"><span>翻譯</span><strong>繁體中文</strong></header>
+          <header class="pane-header"><span>翻譯</span><strong id="targetLanguageLabel">繁體中文</strong></header>
           <div class="caption-text" id="translatedCaption"><span class="placeholder">等待翻譯...</span></div>
         </section>
       </main>
