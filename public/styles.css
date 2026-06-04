@@ -576,8 +576,9 @@ input[type="range"] {
   }
 
   .control-bar {
-    max-height: 42vh;
+    max-height: 38vh;
     overflow: auto;
+    padding: 10px;
   }
 
   .brand h1 {
@@ -587,6 +588,35 @@ input[type="range"] {
   .control-group label {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .primary-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 7px;
+  }
+
+  .primary-actions button,
+  .primary-actions select,
+  .primary-actions .compact-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .compact-select {
+    justify-content: space-between;
+    padding: 0 8px;
+  }
+
+  .compact-select select {
+    max-width: 58%;
+    min-width: 0;
+  }
+
+  .help-details,
+  .control-details {
+    width: 100%;
   }
 
   .control-group select,

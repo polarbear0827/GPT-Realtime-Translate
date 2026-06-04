@@ -1,0 +1,22 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "local.keynotelivetranslator"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "local.keynotelivetranslator"
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName "0.3.0"
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ["../../public"]
+        }
+    }
+}

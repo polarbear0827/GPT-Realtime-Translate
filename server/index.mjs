@@ -7,7 +7,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = normalize(join(__dirname, ".."));
 const publicDir = join(root, "public");
 const port = Number(process.env.PORT || 8787);
-const appVersion = process.env.APP_VERSION || "0.2.0";
+const appVersion = process.env.APP_VERSION || "0.3.0";
 let apiKey = null;
 
 const translationOutputLanguages = new Set(["es", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "vi", "it", "en"]);

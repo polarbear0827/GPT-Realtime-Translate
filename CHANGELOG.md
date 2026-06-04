@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.0 - 2026-06-04
+
+- Added an Android app project using native Java Activity + WebView.
+- Added an Android localhost server that mirrors the desktop security model:
+  - API key is stored in memory only.
+  - Server binds only to `127.0.0.1`.
+  - Realtime client secrets are created inside the app-local server.
+- Added Android microphone and network permissions.
+- Added Android-friendly responsive UI refinements for smaller portrait screens.
+- Added Android APK build script and GitHub Actions Android build steps.
+- Updated Release workflow to attach both macOS `.pkg` and Android `.apk` assets.
+
 ## v0.2.0 - 2026-06-03
 
 - Added a real macOS window using Swift AppKit and WKWebView.

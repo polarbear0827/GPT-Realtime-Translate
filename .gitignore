@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 *.log
 keynote-translator-*.png
+android/.gradle/
+android/build/
+android/app/build/
+*.apk

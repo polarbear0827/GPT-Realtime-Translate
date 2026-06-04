@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
+  build-macos:
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -26,6 +26,59 @@ jobs:
       - name: Build pkg
         run: npm run build:pkg
 
+      - name: Upload macOS pkg
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-pkg
+          path: build/v*/KeynoteLiveTranslator-*.pkg
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build Android APK
+        run: |
+          gradle -p android assembleDebug
+          VERSION="$(cat VERSION)"
+          mkdir -p "build/v$VERSION"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "build/v$VERSION/KeynoteLiveTranslator-android-$VERSION-debug.apk"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/v*/KeynoteLiveTranslator-android-*.apk
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos
+      - build-android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,7 +87,8 @@ jobs:
           if [ ! -f "$NOTES_FILE" ]; then
             NOTES_FILE="CHANGELOG.md"
           fi
+          mapfile -t ASSETS < <(find release-assets -type f \( -name "*.pkg" -o -name "*.apk" \) | sort)
           gh release create "$GITHUB_REF_NAME" \
-            build/v*/KeynoteLiveTranslator-*.pkg \
+            "${ASSETS[@]}" \
             --title "$GITHUB_REF_NAME" \
             --notes-file "$NOTES_FILE"
