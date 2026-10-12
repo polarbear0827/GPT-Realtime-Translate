@@ -6,11 +6,14 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 - Translated captions from `gpt-realtime-translate`.
 - Bilingual, translation-only, or source-only captions; 13 source and 13 target languages.
 - Transcript recording with SRT (source / translation / bilingual), Markdown, text and JSON export.
+- Translate what the Mac is playing (YouTube, meetings) without speakers, shown as floating captions
+  over any app, including full-screen video (macOS 14.2+).
+- Light and dark appearance (follows the system by default).
 - macOS app (universal, ~2 MB), plus a browser version for development.
 
 ## Current Version
 
-`0.4.0` — see [CHANGELOG.md](CHANGELOG.md).
+`0.5.0` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -50,6 +53,20 @@ Realtime flow:
   (about half the audio cost).
 - **只顯示翻譯** — `gpt-realtime-translate` only. The source transcript is still recorded for export.
 - **只顯示原文** — `gpt-live-transcribe` only.
+
+## Translating Videos Playing On Your Mac
+
+1. In the toolbar choose **音源 > 電腦播放的聲音** (macOS app, macOS 14.2+).
+2. Pick **只顯示翻譯** (the spoken language is detected automatically) or 雙語, and the target language.
+3. Press **開始** and play the video. The floating caption window opens on top of everything,
+   including full-screen video; drag it where you like.
+4. Hover the floating captions to change the text size, lock it (clicks pass through to the video) or
+   close it. ⌘⇧O shows/hides it and ⌘⇧L locks/unlocks it from the app's View menu.
+
+The audio is captured digitally with a Core Audio process tap, so it works with headphones and with
+the speakers off. Optionally enable 設定 > 收音 > 把原本的聲音靜音 to silence the original while
+reading. The first time, macOS asks to allow "System Audio Recording"; if captions stay empty, enable
+it under System Settings > Privacy & Security > Screen & System Audio Recording and reopen the app.
 
 ## Using It
 

@@ -11,6 +11,13 @@ protocol BridgeHost: AnyObject {
     func setKeepAwake(_ enabled: Bool)
     func setLeaveGuard(enabled: Bool, message: String)
     func openDisplayWindow()
+    var systemAudioSupported: Bool { get }
+    func startSystemAudio(muteSource: Bool) throws
+    func stopSystemAudio()
+    var overlayState: [String: Any] { get }
+    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any]
+    func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?)
+    func setAppearance(_ theme: String)
 }
 
 // window.webkit.messageHandlers.klt — the page's only way to reach native code. Messages are
@@ -46,8 +53,15 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             reply([
                 "platform": "macos",
                 "version": version,
-                "supports": ["rememberKey": true, "nativeSave": true, "displayWindow": true],
+                "supports": [
+                    "rememberKey": true,
+                    "nativeSave": true,
+                    "displayWindow": true,
+                    "systemAudio": host.systemAudioSupported,
+                    "overlay": true,
+                ],
                 "rememberKeyLabel": "記住金鑰（存在 macOS 鑰匙圈）",
+                "overlay": host.overlayState,
             ])
         case "request":
             let method = body["method"] as? String ?? "GET"
@@ -73,6 +87,28 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "openDisplayWindow":
             host.openDisplayWindow()
             reply(["opened": true])
+        case "systemAudioStart":
+            do {
+                try host.startSystemAudio(muteSource: body["muteSource"] as? Bool ?? false)
+                reply(["ok": true])
+            } catch {
+                replyHandler(nil, error.localizedDescription)
+            }
+        case "systemAudioStop":
+            host.stopSystemAudio()
+            reply(["ok": true])
+        case "overlay":
+            reply(host.configureOverlay(
+                visible: body["visible"] as? Bool,
+                locked: body["locked"] as? Bool,
+                fontScale: body["fontScale"] as? Double
+            ))
+        case "setAppearance":
+            host.setAppearance(body["theme"] as? String ?? "system")
+            reply(["ok": true])
+        case "overlayUpdate":
+            host.updateOverlay(primary: OverlayLine(json: body["primary"]), secondary: OverlayLine(json: body["secondary"]))
+            reply(["ok": true])
         default:
             replyHandler(nil, "Unknown action")
         }

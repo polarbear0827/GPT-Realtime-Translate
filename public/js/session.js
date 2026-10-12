@@ -8,6 +8,7 @@
 import * as defaultApi from "./api.js";
 import { AudioInput, CHUNK_MS } from "./audio.js";
 import { TranscribeClient, TranslateClient, delay as defaultDelay } from "./realtime.js";
+import { SystemAudioInput } from "./system-audio.js";
 import { VoiceActivityDetector } from "./vad.js";
 
 const ROTATE_AFTER_MS = 55 * 60 * 1000;
@@ -20,6 +21,7 @@ const STREAM_IDLE_SEAL_MS = 2_500;
 const SILENCE_WARNING_MS = 20_000;
 const AUDIO_BACKLOG_CHUNKS = Math.round(20_000 / CHUNK_MS);
 const SOURCE_STREAM_LATENCY_MS = 600;
+const SYSTEM_AUDIO_SIGNAL_GRACE_MS = 5_000;
 const ERROR_REPEAT_MS = 15_000;
 const TICK_MS = 500;
 
@@ -37,6 +39,7 @@ export class SessionController {
   constructor({ store, liveSource, liveTranslation, isRecording, languageInfo, onChange, onCaptions, onNotice, onLevel }, deps = {}) {
     this.api = deps.api ?? defaultApi;
     this.AudioInput = deps.AudioInput ?? AudioInput;
+    this.SystemAudioInput = deps.SystemAudioInput ?? SystemAudioInput;
     this.TranslateClient = deps.TranslateClient ?? TranslateClient;
     this.TranscribeClient = deps.TranscribeClient ?? TranscribeClient;
     this.delay = deps.delay ?? defaultDelay;
@@ -89,8 +92,13 @@ export class SessionController {
     if (this.status !== "idle") return;
     const needTranslate = options.mode !== "source";
     const needTranscribe = options.mode === "source" || (options.mode === "bilingual" && options.bilingualEngine === "dual");
+    const systemAudio = options.audioSource === "system";
     const run = {
-      options,
+      // Translated speech playing on this Mac would be captured again as system audio.
+      options: systemAudio ? { ...options, playAudio: false } : options,
+      systemAudio,
+      sawSignal: false,
+      signalWarned: false,
       needTranslate,
       needTranscribe,
       sourceFromTranslate: needTranslate && !needTranscribe,
@@ -124,12 +132,13 @@ export class SessionController {
     this.setStatus("starting", "取得麥克風與連線權杖");
 
     try {
-      run.audio = new this.AudioInput({
+      const Input = systemAudio ? this.SystemAudioInput : this.AudioInput;
+      run.audio = new Input({
         onChunk: (pcm, rms, peak, at) => this.handleAudio(run, pcm, rms, peak, at),
-        onEnded: () => this.handleMicEnded(run),
+        onEnded: (message) => this.handleMicEnded(run, message),
       });
       const [, translateSecret, transcribeSecret] = await Promise.all([
-        run.audio.open({ deviceId: options.deviceId, processing: options.micProcessing }),
+        run.audio.open({ deviceId: options.deviceId, processing: options.micProcessing, muteSource: options.muteSystemAudio }),
         needTranslate ? this.api.createTranslationSecret(translationParams(options)) : null,
         needTranscribe ? this.api.createTranscriptionSecret(transcriptionParams(options)) : null,
       ]);
@@ -191,6 +200,7 @@ export class SessionController {
   }
 
   setPlayAudio(play) {
+    if (this.run?.systemAudio) return;
     this.run?.translate?.setPlayAudio(play);
   }
 
@@ -357,6 +367,7 @@ export class SessionController {
 
   handleAudio(run, pcm, rms, peak, at) {
     if (run !== this.run || run.cancelled) return;
+    if (peak > 0) run.sawSignal = true;
     this.onLevel(rms, peak);
     const event = run.vad.update(rms, at, CHUNK_MS);
     if (event?.type === "speech-start") run.turn = { startPerf: event.atMs };
@@ -398,9 +409,10 @@ export class SessionController {
     if (run.nextTranscribe) this.switchTranscribe(run);
   }
 
-  handleMicEnded(run) {
+  handleMicEnded(run, message) {
     if (run !== this.run || run.cancelled) return;
-    this.onNotice("error", "麥克風訊號中斷（可能被拔除或被其他 App 佔用），已停止。");
+    const fallback = run.systemAudio ? "電腦聲音擷取中斷" : "麥克風訊號中斷（可能被拔除或被其他 App 佔用）";
+    this.onNotice("error", `${message || fallback}，已停止。`);
     this.stop();
   }
 
@@ -531,6 +543,11 @@ export class SessionController {
     }
     if (run.transcribe && !run.nextTranscribe && !run.reconnecting.transcribe && !run.rotating.transcribe && now >= run.nextRotation.transcribe) {
       this.rotateTranscribe(run);
+    }
+    // Exact digital silence from the system tap almost always means the permission isn't granted.
+    if (run.systemAudio && !run.sawSignal && !run.signalWarned && run.liveSince && now - run.liveSince >= SYSTEM_AUDIO_SIGNAL_GRACE_MS) {
+      run.signalWarned = true;
+      this.onNotice("system-audio-silent", "還沒收到電腦播放的聲音。");
     }
     if (!run.silenceWarned && now - run.lastVoiceAt >= SILENCE_WARNING_MS) {
       run.silenceWarned = true;

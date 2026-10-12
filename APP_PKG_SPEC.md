@@ -23,6 +23,11 @@ macOS `.app` 以 `.pkg` 安裝到 `/Applications`。使用者開啟 App、輸入
 - `RealtimeBackend.swift`：金鑰保管與驗證、向 OpenAI 換短效 client secret；規則與
   `server/realtime.mjs` 相同，由 `tests/contract.test.mjs` 比對。
 - `KeychainStore.swift`：使用者勾選「記住金鑰」時存入登入鑰匙圈。
+- `SystemAudioCapture.swift`：Core Audio process tap（macOS 14.2+）擷取整台 Mac 播放的聲音（排除本 App），
+  經 AVAudioConverter 轉成 24 kHz mono PCM16、每 50 ms 一段送進網頁，網頁再產生 MediaStreamTrack 給 WebRTC。
+  需要 `NSAudioCaptureUsageDescription`；未授權時只會收到靜音，網頁會提示到「螢幕與系統錄音」開啟。
+- `CaptionOverlay.swift`：懸浮字幕 NSPanel（不搶焦點、所有桌面與全螢幕可見、可鎖定滑鼠穿透），
+  依實際排版選出能放進兩行的最新完整句子，原文一行顯示在下方。
 
 ## 即時處理
 

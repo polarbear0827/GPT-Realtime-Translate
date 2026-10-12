@@ -2,6 +2,7 @@
 // in an offscreen WKWebView wired to NativeBridge, then exercises the bridge and the HTTP server.
 // Run: npm run test:macos
 import AppKit
+import AVFoundation
 import Network
 import WebKit
 
@@ -19,13 +20,17 @@ final class MemoryKeyStore: KeyStoring {
 @MainActor
 final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var server: StaticServer!
-    private var webView: WKWebView!
+    var webView: WKWebView!
     private var window: NSWindow!
     private var bridge: NativeBridge!
     private var failures = 0
     private var started = false
     private var savedContent = ""
     private var leaveGuardCalls = 0
+    private var appearance = ""
+    private var systemAudioStarted = false
+    private var overlay: [String: Any] = ["visible": false, "locked": false, "fontScale": 1.0]
+    private var overlayUpdates: [(OverlayLine?, OverlayLine?)] = []
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
@@ -65,6 +70,32 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     func setKeepAwake(_ enabled: Bool) {}
     func setLeaveGuard(enabled: Bool, message: String) { leaveGuardCalls += 1 }
     func openDisplayWindow() {}
+    func setAppearance(_ theme: String) { appearance = theme }
+
+    // System audio is simulated: 10 chunks of a 440 Hz tone, delivered the way the app delivers them.
+    var systemAudioSupported: Bool { true }
+    func startSystemAudio(muteSource: Bool) throws {
+        systemAudioStarted = true
+        for index in 0..<10 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50 * index)) { [weak self] in
+                guard let self, self.systemAudioStarted else { return }
+                let samples = (0..<1200).map { Int16(12000 * sin(Double($0 + index * 1200) * 2 * .pi * 440 / 24000)) }
+                let data = samples.withUnsafeBufferPointer { Data(buffer: $0) }
+                self.webView.evaluateJavaScript("window.__kltSystemAudio&&window.__kltSystemAudio('\(data.base64EncodedString())',0.25,0.37)")
+            }
+        }
+    }
+    func stopSystemAudio() { systemAudioStarted = false }
+    var overlayState: [String: Any] { overlay }
+    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any] {
+        if let visible { overlay["visible"] = visible }
+        if let locked { overlay["locked"] = locked }
+        if let fontScale { overlay["fontScale"] = fontScale }
+        return overlay
+    }
+    func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?) {
+        overlayUpdates.append((primary, secondary))
+    }
 
     // ---- checks ----
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -122,6 +153,10 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             check("bridge script", false, "\(error)")
         }
 
+        await checkSystemAudioAndOverlay()
+        checkTextFitting()
+        checkDownsampler()
+
         let port = server.port
         check("index served", await rawStatus("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n") == 200)
         check("worklet module served", await rawStatus("GET /js/pcm-worklet.js HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n") == 200)
@@ -132,6 +167,83 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
 
         print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    private func checkSystemAudioAndOverlay() async {
+        let script = """
+        const h = window.webkit.messageHandlers.klt;
+        const call = async (message) => JSON.parse(await h.postMessage(message));
+        const info = await call({ action: "info" });
+        const overlay = await call({ action: "overlay", visible: true, fontScale: 1.3 });
+        await call({ action: "overlayUpdate", primary: { sentences: ["你好。", "今天天氣很好。"], cjk: true, lang: "zh-Hant" }, secondary: { sentences: ["안녕하세요."], cjk: false, lang: "ko" } });
+        await call({ action: "setAppearance", theme: "light" });
+        const { SystemAudioInput } = await import("/js/system-audio.js");
+        let chunks = 0;
+        let lastRms = 0;
+        const input = new SystemAudioInput({ onChunk: (pcm, rms) => { chunks += pcm.byteLength === 2400 ? 1 : 0; lastRms = rms; } });
+        await input.open({ muteSource: false });
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const track = input.track;
+        const result = { info, overlay, chunks, lastRms, trackKind: track?.kind, trackState: track?.readyState, contextRate: input.context?.sampleRate };
+        input.close();
+        return JSON.stringify(result);
+        """
+        do {
+            let raw = try await webView.callAsyncJavaScript(script, contentWorld: .page) as? String ?? "{}"
+            let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] ?? [:]
+            let supports = (result["info"] as? [String: Any])?["supports"] as? [String: Any]
+            check("info reports system audio + overlay support", supports?["systemAudio"] as? Bool == true && supports?["overlay"] as? Bool == true)
+            let overlay = result["overlay"] as? [String: Any]
+            check("overlay settings round trip", overlay?["visible"] as? Bool == true && overlay?["fontScale"] as? Double == 1.3)
+            check("overlay text reaches native", overlayUpdates.last?.0?.sentences == ["你好。", "今天天氣很好。"] && overlayUpdates.last?.1?.lang == "ko")
+            check("theme reaches native window", appearance == "light")
+            check("system audio chunks reach the page pipeline", result["chunks"] as? Int == 10, "\(result["chunks"] ?? "nil") chunks")
+            check("system audio becomes a live WebRTC-ready track", result["trackKind"] as? String == "audio" && result["trackState"] as? String == "live",
+                  "rate \(result["contextRate"] ?? "nil")")
+            check("stop releases native capture", !systemAudioStarted)
+        } catch {
+            check("system audio / overlay script", false, "\(error)")
+        }
+    }
+
+    private func checkTextFitting() {
+        let attributes = OverlayStyle.primaryAttributes(lang: "zh-Hant", scale: 1)
+        let sentences = ["第一句話。", "第二句話比較長一點。", "最新的第三句。"]
+        let wide = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 1000, maxLines: 2)
+        check("fitter keeps every sentence that fits", wide == sentences.joined())
+        let narrow = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 220, maxLines: 2)
+        check("fitter drops the oldest sentences first", narrow.hasSuffix("最新的第三句。") && !narrow.hasPrefix("第一句"), narrow)
+        let long = String(repeating: "很長的句子", count: 20) + "結尾。"
+        let tail = OverlayTextFitter.fit([long], cjk: true, attributes: attributes, width: 300, maxLines: 2)
+        check("an over-long sentence shows its end", tail.hasPrefix("…") && tail.hasSuffix("結尾。"), tail)
+        check("fitted text really fits two lines",
+              OverlayTextFitter.height(tail, attributes, 300) <= OverlayTextFitter.lineHeight(attributes) * 2 + 1)
+        let english = OverlayTextFitter.fit(["Short.", "This is the newest sentence, it keeps going and going for a while."],
+                                            cjk: false, attributes: OverlayStyle.primaryAttributes(lang: "en", scale: 1), width: 260, maxLines: 2)
+        check("latin text is cut at a word boundary", english.hasPrefix("…") ? !english.dropFirst().hasPrefix(" ") : true, english)
+    }
+
+    private func checkDownsampler() {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
+        guard let downsampler = PCMDownsampler(inputFormat: format) else {
+            check("downsampler", false)
+            return
+        }
+        var chunks: [(Data, Float, Float)] = []
+        for block in 0..<100 {
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
+            buffer.frameLength = 480
+            for frame in 0..<480 {
+                let value = Float(0.5 * sin(Double(block * 480 + frame) * 2 * .pi * 1000 / 48_000))
+                buffer.floatChannelData![0][frame] = value
+                buffer.floatChannelData![1][frame] = value
+            }
+            chunks += downsampler.process(buffer)
+        }
+        let samples = chunks.count * PCMDownsampler.chunkSamples
+        check("48 kHz stereo → 24 kHz mono, 50 ms chunks", abs(samples - 24_000) <= PCMDownsampler.chunkSamples && chunks.allSatisfy { $0.0.count == 2400 }, "\(samples) samples")
+        let rms = chunks.dropFirst().map(\.1).reduce(0, +) / Float(max(1, chunks.count - 1))
+        check("level is preserved (0.5 sine → RMS ≈ 0.35)", abs(rms - 0.354) < 0.03, "\(rms)")
     }
 
     private func rawStatus(_ request: String) async -> Int {

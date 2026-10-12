@@ -2,9 +2,11 @@ import * as api from "./api.js";
 import { AudioInput, levelToDb, listMicrophones, microphonePermissionState } from "./audio.js";
 import { CaptionView, LiveTrack } from "./captions.js";
 import { exportJson, exportMarkdown, exportSrt, exportText } from "./exporters.js";
+import { buildOverlayPayload } from "./overlay.js";
 import { platform } from "./platform.js";
 import { SessionController } from "./session.js";
 import { loadSettings, safeStorage, saveSetting } from "./settings.js";
+import { SystemAudioInput } from "./system-audio.js";
 import { TranscriptStore } from "./transcript.js";
 import { TranscriptView } from "./transcript-view.js";
 import { bindMenu, confirmDialog, createToaster } from "./ui.js";
@@ -12,6 +14,7 @@ import { displayText, ensureZhConverter } from "./zh.js";
 
 const BACKUP_KEY = "keynote:transcriptBackup";
 const DISPLAY_CHANNEL = "klt-display";
+const OVERLAY_INTERVAL_MS = 100;
 const isDisplayView = new URLSearchParams(location.search).get("view") === "display";
 
 const $ = (id) => document.getElementById(id);
@@ -25,6 +28,14 @@ const els = {
   levelMeter: $("levelMeter"),
   startStopBtn: $("startStopBtn"),
   captionModeSelect: $("captionModeSelect"),
+  audioSourceField: $("audioSourceField"),
+  audioSourceSelect: $("audioSourceSelect"),
+  overlayBtn: $("overlayBtn"),
+  systemAudioSettings: $("systemAudioSettings"),
+  muteSystemAudioToggle: $("muteSystemAudioToggle"),
+  themeSelect: $("themeSelect"),
+  overlaySettings: $("overlaySettings"),
+  overlayLockToggle: $("overlayLockToggle"),
   sourceLanguageSelect: $("sourceLanguageSelect"),
   targetLanguageSelect: $("targetLanguageSelect"),
   recordBtn: $("recordBtn"),
@@ -111,6 +122,10 @@ let transcriptView = null;
 let exportMenu = null;
 let lastKeepAwake = null;
 let lastLeaveGuard = "";
+let overlayState = { visible: false, locked: false, fontScale: 1 };
+let overlayTimer = 0;
+let lastOverlaySent = 0;
+let lastOverlayPayload = "";
 
 const controller = new SessionController({
   store,
@@ -119,7 +134,10 @@ const controller = new SessionController({
   isRecording: () => settings.recording,
   languageInfo,
   onChange: () => scheduleStatus(),
-  onCaptions: () => scheduleCaptions(),
+  onCaptions: () => {
+    scheduleCaptions();
+    scheduleOverlay();
+  },
   onNotice: handleNotice,
   onLevel: (rms) => setMeter(els.levelMeter, rms),
 });
@@ -153,6 +171,7 @@ function initDisplayView() {
 function applyDisplayState(data) {
   els.captionLayout.dataset.mode = data.mode;
   applyLayout(data.settings);
+  applyTheme(data.settings.theme);
   for (const [view, part] of [
     [sourceView, data.source],
     [translationView, data.translation],
@@ -169,6 +188,7 @@ async function initMainView() {
   populateLanguageSelects();
   applySettingsToControls();
   applyLayout(settings);
+  applyTheme(settings.theme);
   bindEvents();
   transcriptView = new TranscriptView({
     store,
@@ -181,6 +201,7 @@ async function initMainView() {
 
   platformInfo = await platform.info().catch(() => ({ supports: {} }));
   els.displayWindowBtn.hidden = !platformInfo.supports?.displayWindow;
+  initSystemAudioAndOverlay();
   try {
     const health = await api.getHealth();
     hasApiKey = Boolean(health.hasApiKey);
@@ -219,6 +240,9 @@ function populateLanguageSelects() {
 
 function applySettingsToControls() {
   els.captionModeSelect.value = settings.captionMode;
+  els.audioSourceSelect.value = settings.audioSource;
+  els.muteSystemAudioToggle.checked = settings.muteSystemAudio;
+  els.themeSelect.value = settings.theme;
   els.sourceLanguageSelect.value = settings.sourceLanguage;
   els.targetLanguageSelect.value = settings.targetLanguage;
   els.micProcessingSelect.value = settings.micProcessing;
@@ -274,6 +298,18 @@ function bindEvents() {
     updateSetting("targetLanguage", els.targetLanguageSelect.value);
     loadChineseIfNeeded();
   });
+  els.audioSourceSelect.addEventListener("change", () => {
+    updateSetting("audioSource", els.audioSourceSelect.value);
+    renderStatus();
+  });
+  els.muteSystemAudioToggle.addEventListener("change", () => updateSetting("muteSystemAudio", els.muteSystemAudioToggle.checked));
+  els.themeSelect.addEventListener("change", () => {
+    updateSetting("theme", els.themeSelect.value);
+    applyTheme(settings.theme);
+    broadcastCaptions();
+  });
+  els.overlayBtn.addEventListener("click", () => setOverlayVisible(!overlayState.visible));
+  els.overlayLockToggle.addEventListener("change", () => configureOverlay({ locked: els.overlayLockToggle.checked }));
   els.recordBtn.addEventListener("click", () => {
     updateSetting("recording", !settings.recording);
     if (!settings.recording) store.sealAll();
@@ -385,6 +421,8 @@ async function startSession() {
     keywords: settings.keywords,
     translationLatencyMs: settings.translationLatencyMs,
     playAudio: settings.playAudio,
+    audioSource: settings.audioSource,
+    muteSystemAudio: settings.muteSystemAudio,
   };
   if (options.mode !== "source" && options.sourceLanguage === options.targetLanguage) {
     toaster.show("info", "原文與翻譯語言相同，翻譯模型可能不會輸出內容；只需要字幕時建議改用「只顯示原文」。", { key: "same-language" });
@@ -396,6 +434,8 @@ async function startSession() {
   try {
     await controller.start(options);
     refreshMicrophones();
+    // Translating what the Mac plays is meant to be read over the video: show the floating captions.
+    if (options.audioSource === "system" && platformInfo.supports?.overlay && !overlayState.visible) setOverlayVisible(true);
   } catch (error) {
     toaster.show("error", describeStartError(error), { key: "start-error" });
   }
@@ -409,12 +449,14 @@ function describeStartError(error) {
   }
   if (name === "NotFoundError") return "找不到可用的麥克風，請確認麥克風已連接。";
   if (name === "NotReadableError") return "麥克風無法讀取，可能正被其他 App 使用。請關閉其他使用麥克風的 App 後再試。";
+  if (name === "NotSupportedError") return error.message;
   return error?.message || "無法開始即時字幕。";
 }
 
 function handleNotice(level, message) {
   if (level === "silence") toaster.show("warning", message, { key: "silence", timeout: 0 });
   else if (level === "silence-cleared") toaster.dismiss("silence");
+  else if (level === "system-audio-silent") toaster.show("warning", `${message}${platform.systemAudioHelp || ""}`, { key: "system-audio", timeout: 0 });
   else toaster.show(level, message);
 }
 
@@ -449,6 +491,12 @@ function renderStatus() {
     control.disabled = busy;
   }
   els.clearKeyBtn.disabled = busy || !hasApiKey;
+  const systemAudio = settings.audioSource === "system";
+  els.audioSourceSelect.disabled = busy;
+  els.muteSystemAudioToggle.disabled = busy || !systemAudio;
+  els.micSelect.disabled = busy || systemAudio;
+  els.micProcessingSelect.disabled = busy || systemAudio;
+  els.playAudioToggle.disabled = systemAudio;
   els.liveSettingsNote.hidden = !busy;
   document.body.classList.toggle("is-live", busy);
 
@@ -532,6 +580,7 @@ function broadcastCaptions() {
       translatedFontSize: settings.translatedFontSize,
       displayBackground: settings.displayBackground,
       displayAlign: settings.displayAlign,
+      theme: settings.theme,
     },
   });
 }
@@ -540,7 +589,10 @@ function togglePause() {
   paused = !paused;
   for (const badge of document.querySelectorAll(".paused-badge")) badge.hidden = !paused;
   renderStatus();
-  if (!paused) scheduleCaptions();
+  if (!paused) {
+    scheduleCaptions();
+    scheduleOverlay();
+  }
 }
 
 function clearCaptions() {
@@ -548,6 +600,7 @@ function clearCaptions() {
   liveTranslation.clear();
   if (paused) togglePause();
   scheduleCaptions();
+  scheduleOverlay();
 }
 
 function loadChineseIfNeeded() {
@@ -684,6 +737,92 @@ function bindSplitter() {
   });
 }
 
+// ---- theme ------------------------------------------------------------------------------------
+
+function applyTheme(theme = "system") {
+  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  platform.setAppearance?.(theme);
+}
+
+// ---- system audio & floating captions (macOS app) ---------------------------------------------
+
+function initSystemAudioAndOverlay() {
+  const supports = platformInfo.supports || {};
+  els.audioSourceField.hidden = !supports.systemAudio;
+  els.systemAudioSettings.hidden = !supports.systemAudio;
+  if (!supports.systemAudio && settings.audioSource === "system") updateSetting("audioSource", "mic");
+  els.audioSourceSelect.value = settings.audioSource;
+  els.overlayBtn.hidden = !supports.overlay;
+  els.overlaySettings.hidden = !supports.overlay;
+  if (platformInfo.overlay) overlayState = platformInfo.overlay;
+  // The native window reports changes made from its own controls or the app menu.
+  window.__kltOverlayState = (state) => {
+    const becameVisible = state.visible && !overlayState.visible;
+    overlayState = state;
+    renderOverlayControls();
+    if (becameVisible) {
+      lastOverlayPayload = "";
+      scheduleOverlay();
+    }
+  };
+  renderOverlayControls();
+}
+
+function renderOverlayControls() {
+  els.overlayBtn.setAttribute("aria-pressed", String(overlayState.visible));
+  els.overlayLockToggle.checked = overlayState.locked;
+}
+
+async function configureOverlay(change) {
+  if (!platform.setOverlay) return;
+  try {
+    overlayState = await platform.setOverlay(change);
+  } catch (error) {
+    toaster.show("error", `懸浮字幕：${error.message}`);
+  }
+  renderOverlayControls();
+}
+
+async function setOverlayVisible(visible) {
+  await configureOverlay({ visible });
+  if (overlayState.visible) {
+    lastOverlayPayload = "";
+    scheduleOverlay();
+  }
+}
+
+// Driven by caption events with a timer (not requestAnimationFrame), so the floating captions keep
+// updating while the main window is hidden behind a full-screen video.
+function scheduleOverlay() {
+  if (!overlayState.visible || !platform.updateOverlay || paused) return;
+  const wait = OVERLAY_INTERVAL_MS - (performance.now() - lastOverlaySent);
+  if (wait <= 0) sendOverlay();
+  else if (!overlayTimer) {
+    overlayTimer = setTimeout(() => {
+      overlayTimer = 0;
+      sendOverlay();
+    }, wait);
+  }
+}
+
+function sendOverlay() {
+  lastOverlaySent = performance.now();
+  const payload = buildOverlayPayload({
+    mode: settings.captionMode,
+    sourceText: liveSource.text(languageInfo(settings.sourceLanguage).cjk),
+    translationText: liveTranslation.text(languageInfo(settings.targetLanguage).cjk),
+    sourceLanguage: settings.sourceLanguage,
+    targetLanguage: settings.targetLanguage,
+    languageInfo,
+    display: displayText,
+  });
+  const json = JSON.stringify(payload);
+  if (json === lastOverlayPayload) return;
+  lastOverlayPayload = json;
+  platform.updateOverlay(payload);
+}
+
 // ---- microphone -------------------------------------------------------------------------------
 
 async function refreshMicrophones() {
@@ -703,19 +842,21 @@ async function testMicrophone() {
     toaster.show("info", "直播中，請看上方的音量表確認收音。");
     return;
   }
+  const systemAudio = settings.audioSource === "system";
   els.micTestBtn.disabled = true;
   els.micTestMeter.hidden = false;
-  els.micTestResult.textContent = "請對著麥克風說話…";
+  els.micTestResult.textContent = systemAudio ? "請在 Mac 上播放影片或音樂…" : "請對著麥克風說話…";
   let peak = 0;
-  const input = new AudioInput({
+  const Input = systemAudio ? SystemAudioInput : AudioInput;
+  const input = new Input({
     onChunk: (_pcm, rms, chunkPeak) => {
       peak = Math.max(peak, chunkPeak);
       setMeter(els.micTestMeter, rms);
     },
   });
   try {
-    await input.open({ deviceId: settings.micDeviceId, processing: settings.micProcessing });
-    const label = input.track?.label || "麥克風";
+    await input.open({ deviceId: settings.micDeviceId, processing: settings.micProcessing, muteSource: false });
+    const label = systemAudio ? "電腦播放的聲音" : input.track?.label || "麥克風";
     await new Promise((resolve) => setTimeout(resolve, 5000));
     const peakDb = Math.round(levelToDb(peak));
     const permission = await microphonePermissionState();
@@ -724,7 +865,9 @@ async function testMicrophone() {
         ? `收音正常：${label}（峰值 ${peakDb} dB）`
         : peakDb > -50
           ? `音量偏小：${label}（峰值 ${peakDb} dB），請靠近麥克風或調高輸入音量。`
-          : `幾乎沒有收到聲音：${label}。請確認選擇的麥克風與靜音開關。`;
+          : systemAudio
+            ? `沒有收到電腦播放的聲音。${platform.systemAudioHelp || ""}`
+            : `幾乎沒有收到聲音：${label}。請確認選擇的麥克風與靜音開關。`;
     if (permission === "denied") els.micTestResult.textContent += "（權限：拒絕）";
   } catch (error) {
     els.micTestResult.textContent = "";

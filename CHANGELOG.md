@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.0 - 2026-10-12
+
+### Translate what your Mac is playing
+- New audio source "電腦播放的聲音": captures YouTube, meetings or any app digitally with a Core Audio
+  process tap (macOS 14.2+), so nothing has to play through the speakers; works with headphones.
+  Optional "mute the original" while translating. Warns when no audio arrives (usually permission).
+- Floating captions window (懸浮字幕): frosted glass, always on top, visible over full-screen video, never
+  takes focus. Large translation with the original in a smaller line below; whole recent sentences are
+  fitted to two lines. Hover for size / lock (click-through) / close; ⌘⇧O and ⌘⇧L in the View menu.
+  Opens automatically when starting with system audio.
+
+### Appearance
+- Light mode, plus "follow system" (the default); the macOS window chrome follows the choice.
+- Caption background (black / chroma-key green) now applies to the caption panes in every view, so the
+  effect is visible while setting up, and full-bleed in presentation mode and the caption window.
+
+### Reliability
+- Fixed a flaky test that could hang CI; CI jobs and tests have timeouts.
+- The main page keeps running while hidden behind full-screen video (unthrottled scheduling on macOS 14+).
+
 ## v0.4.0 - 2026-10-12
 
 ### Models

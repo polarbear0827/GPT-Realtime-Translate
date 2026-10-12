@@ -29,6 +29,13 @@ class FakeAudio {
   }
 }
 
+class FakeSystemAudio extends FakeAudio {
+  async open(options) {
+    this.openOptions = options;
+    await super.open();
+  }
+}
+
 class FakeTranslate {
   constructor(options) {
     Object.assign(this, options, { closed: null, audioEnabled: null });
@@ -99,7 +106,15 @@ function setup(overrides = {}) {
       onNotice: (level, message) => notices.push({ level, message }),
       onLevel: () => {},
     },
-    { api, AudioInput: FakeAudio, TranslateClient: FakeTranslate, TranscribeClient: FakeTranscribe, delay: async () => {}, ...overrides },
+    {
+      api,
+      AudioInput: FakeAudio,
+      SystemAudioInput: FakeSystemAudio,
+      TranslateClient: FakeTranslate,
+      TranscribeClient: FakeTranscribe,
+      delay: async () => {},
+      ...overrides,
+    },
   );
   controllers.push(controller);
   return { controller, store, notices };
@@ -265,5 +280,28 @@ test("session_expired errors trigger a reconnect instead of an error state", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(translates.length, 2);
   assert.equal(controller.status, "live");
+  await controller.stop();
+});
+
+test("system audio source: uses the native capture, never plays translated speech, warns on silence", async () => {
+  const { controller, notices } = setup();
+  await controller.start(options("translation", { audioSource: "system", muteSystemAudio: true, playAudio: true }));
+  const [audio] = audios;
+  assert.ok(audio instanceof FakeSystemAudio);
+  assert.equal(audio.openOptions.muteSource, true);
+  assert.equal(translates[0].playAudio, false, "translated speech would be captured again");
+  controller.run.liveSince -= 6000;
+  controller.tick(controller.run);
+  assert.ok(notices.some((notice) => notice.level === "system-audio-silent"));
+  await controller.stop();
+});
+
+test("system audio with signal does not warn", async () => {
+  const { controller, notices } = setup();
+  await controller.start(options("translation", { audioSource: "system" }));
+  audios[0].onChunk(new ArrayBuffer(2400), 0.1, 0.2, performance.now());
+  controller.run.liveSince -= 6000;
+  controller.tick(controller.run);
+  assert.ok(!notices.some((notice) => notice.level === "system-audio-silent"));
   await controller.stop();
 });

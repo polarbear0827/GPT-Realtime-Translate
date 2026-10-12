@@ -45,6 +45,13 @@
                 <option value="source">只顯示原文</option>
               </select>
             </label>
+            <label class="select-field" id="audioSourceField" hidden>
+              <span>音源</span>
+              <select id="audioSourceSelect">
+                <option value="mic">麥克風</option>
+                <option value="system">電腦播放的聲音</option>
+              </select>
+            </label>
             <label class="select-field">
               <span>原文</span>
               <select id="sourceLanguageSelect"></select>
@@ -69,6 +76,7 @@
               </div>
             </div>
             <button id="presentBtn" type="button" title="投影模式（F）">投影模式</button>
+            <button id="overlayBtn" type="button" aria-pressed="false" title="懸浮字幕（⌘⇧O）" hidden>懸浮字幕</button>
             <button id="transcriptBtn" type="button" aria-pressed="false" aria-controls="transcriptPanel" title="逐字稿（T）">逐字稿</button>
             <button id="settingsBtn" type="button" aria-pressed="false" aria-controls="settingsPanel" title="設定">設定</button>
             <button id="keyBtn" type="button">輸入金鑰</button>
@@ -123,6 +131,13 @@
 
         <section class="settings-section">
           <h3>收音</h3>
+          <div class="field-group" id="systemAudioSettings" hidden>
+            <label class="switch">
+              <input id="muteSystemAudioToggle" type="checkbox" />
+              <span>擷取電腦聲音時，把原本的聲音靜音（只看字幕）</span>
+            </label>
+            <p class="field-hint">選擇「電腦播放的聲音」時會直接擷取 Mac 正在播放的聲音（影片、會議），不需要外放，戴耳機也可以。第一次使用時，macOS 會請你允許「系統錄音」。</p>
+          </div>
           <label class="field">
             <span>麥克風</span>
             <select id="micSelect"><option value="">系統預設</option></select>
@@ -181,6 +196,14 @@
         <section class="settings-section">
           <h3>顯示</h3>
           <label class="field">
+            <span>外觀</span>
+            <select id="themeSelect">
+              <option value="system">跟隨系統</option>
+              <option value="light">淺色</option>
+              <option value="dark">深色</option>
+            </select>
+          </label>
+          <label class="field">
             <span>原文字級 <output id="sourceFontValue"></output></span>
             <input id="sourceFont" type="range" min="20" max="120" step="2" />
           </label>
@@ -193,9 +216,9 @@
             <span>播放翻譯語音</span>
           </label>
           <label class="field">
-            <span>投影背景</span>
+            <span>字幕背景</span>
             <select id="displayBackgroundSelect">
-              <option value="dark">深色</option>
+              <option value="theme">跟隨外觀</option>
               <option value="black">純黑</option>
               <option value="green">綠幕（去背用）</option>
             </select>
@@ -207,6 +230,13 @@
               <option value="center">置中</option>
             </select>
           </label>
+          <div class="field-group" id="overlaySettings" hidden>
+            <label class="switch">
+              <input id="overlayLockToggle" type="checkbox" />
+              <span>鎖定懸浮字幕（滑鼠可穿透，不會擋住影片操作）</span>
+            </label>
+            <p class="field-hint">滑鼠移到懸浮字幕上可調整字級、鎖定或關閉；鎖定後可用選單「顯示方式 &gt; 鎖定懸浮字幕」（⌘⇧L）解除。</p>
+          </div>
           <div class="field-row">
             <button id="pauseBtn" type="button" aria-pressed="false">暫停顯示</button>
             <button id="displayWindowBtn" type="button">開啟字幕視窗（第二螢幕）</button>
@@ -244,6 +274,7 @@
             <dt>P</dt><dd>暫停 / 恢復字幕顯示</dd>
             <dt>M</dt><dd>手動分段</dd>
             <dt>F</dt><dd>投影模式</dd>
+            <dt>⌘⇧O</dt><dd>懸浮字幕（macOS App）</dd>
             <dt>T</dt><dd>逐字稿</dd>
             <dt>+ / −</dt><dd>放大 / 縮小字幕</dd>
             <dt>Esc</dt><dd>關閉面板、離開投影模式</dd>

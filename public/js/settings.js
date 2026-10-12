@@ -11,6 +11,8 @@ export const DEFAULT_SETTINGS = {
   splitRatio: 0.48,
   sourceFontSize: 48,
   translatedFontSize: 62,
+  audioSource: "mic",
+  muteSystemAudio: false,
   micDeviceId: "",
   micProcessing: "standard",
   noiseReduction: "near_field",
@@ -22,15 +24,18 @@ export const DEFAULT_SETTINGS = {
   recording: true,
   autoBackup: true,
   playAudio: false,
-  displayBackground: "dark",
+  theme: "system",
+  displayBackground: "theme",
   displayAlign: "left",
 };
 
 const CHOICES = {
   captionMode: ["bilingual", "translation", "source"],
   bilingualEngine: ["dual", "translate"],
+  audioSource: ["mic", "system"],
   micProcessing: ["standard", "raw"],
-  displayBackground: ["dark", "black", "green"],
+  theme: ["system", "light", "dark"],
+  displayBackground: ["theme", "black", "green"],
   displayAlign: ["left", "center"],
 };
 
@@ -52,6 +57,8 @@ export function loadSettings(storage = safeStorage()) {
   // v0.1 stored caption modes by language.
   if (settings.captionMode === "en") settings.captionMode = "source";
   if (settings.captionMode === "zh") settings.captionMode = "translation";
+  // v0.4 called the theme-colored caption background "dark".
+  if (settings.displayBackground === "dark") settings.displayBackground = "theme";
   return sanitize(settings);
 }
 

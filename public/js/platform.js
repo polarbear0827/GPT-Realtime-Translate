@@ -24,7 +24,14 @@ function createMacPlatform(handler) {
     setKeepAwake: (enabled) => call({ action: "setKeepAwake", enabled }).catch(() => {}),
     setLeaveGuard: (enabled, message = "") => call({ action: "setLeaveGuard", enabled, message }).catch(() => {}),
     openDisplayWindow: () => call({ action: "openDisplayWindow" }),
+    startSystemAudio: ({ muteSource = false } = {}) => call({ action: "systemAudioStart", muteSource }),
+    stopSystemAudio: () => call({ action: "systemAudioStop" }).catch(() => {}),
+    setOverlay: (state) => call({ action: "overlay", ...state }),
+    updateOverlay: (payload) => call({ action: "overlayUpdate", ...payload }).catch(() => {}),
+    setAppearance: (theme) => call({ action: "setAppearance", theme }).catch(() => {}),
     micHelp: "請到「系統設定 > 隱私權與安全性 > 麥克風」允許 Keynote Live Translator，然後重新開啟 App。",
+    systemAudioHelp:
+      "請確認正在播放聲音，並到「系統設定 > 隱私權與安全性 > 螢幕與系統錄音」的「僅限系統錄音」允許 Keynote Live Translator（變更後需重新開啟 App）。",
   };
 }
 
@@ -106,6 +113,9 @@ function createWebPlatform() {
       if (!opened) throw new Error("瀏覽器擋下了新視窗，請允許彈出視窗。");
       return { opened: true };
     },
+    startSystemAudio: null,
+    setOverlay: null,
+    setAppearance: async () => {},
     micHelp: "請點網址列左側的網站設定允許麥克風，並確認作業系統的隱私權設定允許這個瀏覽器使用麥克風，然後重新整理頁面。",
   };
 }

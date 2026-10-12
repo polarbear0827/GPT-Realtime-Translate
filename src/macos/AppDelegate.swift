@@ -10,11 +10,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var server: StaticServer!
     private var bridge: NativeBridge!
     private var activity: NSObjectProtocol?
+    private var systemAudio: AnyObject?
+    private var overlayMenuItem: NSMenuItem?
+    private var overlayLockMenuItem: NSMenuItem?
+    private lazy var overlay: CaptionOverlay = {
+        let overlay = CaptionOverlay()
+        overlay.onStateChange = { [weak self] state in self?.overlayStateChanged(state) }
+        return overlay
+    }()
     private var quitConfirmed = false
     var leaveGuard: (enabled: Bool, message: String) = (false, "")
 
     private let preferredPort: UInt16 = UInt16(ProcessInfo.processInfo.environment["KEYNOTE_TRANSLATOR_PORT"] ?? "") ?? 8787
-    private let background = NSColor(red: 0x11 / 255, green: 0x13 / 255, blue: 0x11 / 255, alpha: 1)
+    // Matches the page background in each appearance, so there's no flash while the UI loads.
+    private let background = NSColor(name: "AppBackground") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x11 / 255, green: 0x13 / 255, blue: 0x11 / 255, alpha: 1)
+            : NSColor(red: 0xf4 / 255, green: 0xf3 / 255, blue: 0xee / 255, alpha: 1)
+    }
 
     private var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
@@ -61,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stopSystemAudio()
         setKeepAwake(false)
         server?.stop()
     }
@@ -72,6 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         configuration.mediaTypesRequiringUserActionForPlayback = []
         if withBridge {
             configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "klt")
+            if #available(macOS 14.0, *) {
+                // Keep timers and events running while the window is behind a full-screen video, so the
+                // floating captions keep updating.
+                configuration.preferences.inactiveSchedulingPolicy = .none
+            }
         }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
@@ -208,6 +227,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
     }
 
+    // ---- system audio & floating captions ------------------------------------------------------
+
+    var systemAudioSupported: Bool {
+        if #available(macOS 14.2, *) { return true }
+        return false
+    }
+
+    func startSystemAudio(muteSource: Bool) throws {
+        guard #available(macOS 14.2, *) else {
+            throw SystemAudioError(message: "擷取電腦播放的聲音需要 macOS 14.2 或更新版本。")
+        }
+        stopSystemAudio()
+        let capture = SystemAudioCapture()
+        capture.onChunk = { [weak self] data, rms, peak in
+            let script = "window.__kltSystemAudio&&window.__kltSystemAudio('\(data.base64EncodedString())',\(rms),\(peak))"
+            DispatchQueue.main.async { self?.webView.evaluateJavaScript(script) }
+        }
+        capture.onFailure = { [weak self] message in
+            let payload = NativeBridge.json(["message": message])
+            self?.webView.evaluateJavaScript("window.__kltSystemAudioEnded&&window.__kltSystemAudioEnded(\(payload).message)")
+        }
+        try capture.start(muteSource: muteSource)
+        systemAudio = capture
+    }
+
+    func stopSystemAudio() {
+        if #available(macOS 14.2, *) {
+            (systemAudio as? SystemAudioCapture)?.stop()
+        }
+        systemAudio = nil
+    }
+
+    var overlayState: [String: Any] {
+        overlay.state.json
+    }
+
+    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any] {
+        overlay.apply(visible: visible, locked: locked, fontScale: fontScale)
+        return overlay.state.json
+    }
+
+    func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?) {
+        overlay.update(primary: primary, secondary: secondary)
+    }
+
+    private func overlayStateChanged(_ state: CaptionOverlay.State) {
+        overlayMenuItem?.state = state.visible ? .on : .off
+        overlayLockMenuItem?.state = state.locked ? .on : .off
+        webView?.evaluateJavaScript("window.__kltOverlayState&&window.__kltOverlayState(\(NativeBridge.json(state.json)))")
+    }
+
+    // The page's theme setting also drives the window chrome; "system" follows macOS.
+    func setAppearance(_ theme: String) {
+        let appearance: NSAppearance? = switch theme {
+        case "light": NSAppearance(named: .aqua)
+        case "dark": NSAppearance(named: .darkAqua)
+        default: nil
+        }
+        window?.appearance = appearance
+        displayWindow?.appearance = appearance
+    }
+
+    @objc private func toggleOverlay(_ sender: Any?) {
+        overlay.apply(visible: !overlay.state.visible)
+    }
+
+    @objc private func toggleOverlayLock(_ sender: Any?) {
+        overlay.apply(locked: !overlay.state.locked)
+    }
+
     // ---- WebKit delegates ---------------------------------------------------------------------
 
     private func isAppURL(_ url: URL?) -> Bool {
@@ -309,6 +398,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let viewMenu = NSMenu(title: "顯示方式")
         let fullScreen = viewMenu.addItem(withTitle: "切換全螢幕", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(.separator())
+        let overlayItem = viewMenu.addItem(withTitle: "懸浮字幕", action: #selector(toggleOverlay(_:)), keyEquivalent: "o")
+        overlayItem.keyEquivalentModifierMask = [.command, .shift]
+        overlayItem.target = self
+        overlayMenuItem = overlayItem
+        let lockItem = viewMenu.addItem(withTitle: "鎖定懸浮字幕（滑鼠穿透）", action: #selector(toggleOverlayLock(_:)), keyEquivalent: "l")
+        lockItem.keyEquivalentModifierMask = [.command, .shift]
+        lockItem.target = self
+        overlayLockMenuItem = lockItem
         addSubmenu(viewMenu, to: mainMenu)
 
         let windowMenu = NSMenu(title: "視窗")

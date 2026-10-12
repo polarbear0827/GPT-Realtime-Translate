@@ -24,6 +24,14 @@ test("invalid values fall back to defaults or are clamped", () => {
   assert.equal(settings.translatedFontSize, DEFAULT_SETTINGS.translatedFontSize);
 });
 
+test("v0.4 caption background 'dark' becomes 'theme'; new settings have safe defaults", () => {
+  const settings = loadSettings(memoryStorage({ "keynote:displayBackground": "dark" }));
+  assert.equal(settings.displayBackground, "theme");
+  assert.equal(settings.theme, "system");
+  assert.equal(settings.audioSource, "mic");
+  assert.equal(loadSettings(memoryStorage({ "keynote:audioSource": "speaker" })).audioSource, "mic");
+});
+
 test("booleans round trip", () => {
   const storage = memoryStorage();
   saveSetting("autoBackup", false, storage);
