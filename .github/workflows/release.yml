@@ -11,6 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +30,7 @@ jobs:
   build-macos:
     needs: verify
     runs-on: macos-latest
+    timeout-minutes: 30
     env:
       # Optional: set these repository secrets to ship a signed and notarized installer.
       MACOS_CERTIFICATES_P12: ${{ secrets.MACOS_CERTIFICATES_P12 }}
@@ -72,6 +74,7 @@ jobs:
 
   create-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: build-macos
     steps:
       - name: Checkout

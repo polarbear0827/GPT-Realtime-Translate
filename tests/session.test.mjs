@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { beforeEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { LiveTrack } from "../public/js/captions.js";
 import { SessionController } from "../public/js/session.js";
 import { TranscriptStore } from "../public/js/transcript.js";
@@ -9,6 +9,7 @@ let audios;
 let translates;
 let transcribes;
 let gates;
+let controllers = [];
 
 class FakeAudio {
   constructor({ onChunk, onEnded }) {
@@ -100,6 +101,7 @@ function setup(overrides = {}) {
     },
     { api, AudioInput: FakeAudio, TranslateClient: FakeTranslate, TranscribeClient: FakeTranscribe, delay: async () => {}, ...overrides },
   );
+  controllers.push(controller);
   return { controller, store, notices };
 }
 
@@ -117,6 +119,13 @@ const options = (mode = "bilingual", extra = {}) => ({
   translationLatencyMs: 1500,
   playAudio: false,
   ...extra,
+});
+
+// Always stop every controller, even when an assertion failed mid-test: a live session keeps a
+// timer running, which would otherwise keep the test process alive forever.
+afterEach(async () => {
+  await Promise.all(controllers.map((controller) => controller.stop()));
+  controllers = [];
 });
 
 beforeEach(() => {

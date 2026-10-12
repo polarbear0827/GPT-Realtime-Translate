@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server/index.mjs",
     "check": "for f in server/*.mjs public/js/*.js; do node --check \"$f\" || exit 1; done",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-timeout=60000 tests/*.test.mjs",
     "test:macos": "zsh scripts/test-macos.sh",
     "build:app": "zsh scripts/build-app.sh",
     "build:pkg": "zsh scripts/build-pkg.sh"

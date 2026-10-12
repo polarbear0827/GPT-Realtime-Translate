@@ -46,8 +46,9 @@ export class TranscriptStore {
     }
   }
 
+  // Whole milliseconds: sub-millisecond float noise is meaningless for subtitles.
   relative(nowPerf) {
-    return this.epochPerf === null ? 0 : Math.max(0, nowPerf - this.epochPerf);
+    return this.epochPerf === null ? 0 : Math.max(0, Math.round(nowPerf - this.epochPerf));
   }
 
   get isEmpty() {
