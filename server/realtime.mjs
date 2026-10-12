@@ -1,5 +1,5 @@
 // Pure request validation and OpenAI payload builders.
-// The macOS (Swift) and Android (Java) backends implement the same rules from public/realtime-config.json;
+// The macOS app (src/macos/RealtimeBackend.swift) implements the same rules from public/realtime-config.json;
 // tests/contract.test.mjs keeps them in sync.
 
 export class ValidationError extends Error {

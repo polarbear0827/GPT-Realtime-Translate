@@ -9,7 +9,6 @@ test("VERSION is the single source of truth", () => {
   assert.match(version, /^\d+\.\d+\.\d+$/);
   assert.equal(JSON.parse(read("package.json")).version, version, "package.json version");
   assert.match(read("CHANGELOG.md"), new RegExp(`## v${version.replaceAll(".", "\\.")}\\b`), "CHANGELOG entry");
-  // Native builds read VERSION at build time instead of hard-coding it.
-  assert.doesNotMatch(read("android/app/build.gradle"), /versionName\s+"/);
+  // The macOS build reads VERSION at build time instead of hard-coding it.
   assert.match(read("src/macos/Info.plist"), /__VERSION__/);
 });

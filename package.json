@@ -12,7 +12,6 @@
     "test": "node --test tests/*.test.mjs",
     "test:macos": "zsh scripts/test-macos.sh",
     "build:app": "zsh scripts/build-app.sh",
-    "build:pkg": "zsh scripts/build-pkg.sh",
-    "build:android": "zsh scripts/build-android.sh"
+    "build:pkg": "zsh scripts/build-pkg.sh"
   }
 }

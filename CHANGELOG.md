@@ -21,9 +21,9 @@
 ### Security
 - Dev server checks Host, Origin, Content-Type and a per-launch token (DNS rebinding / CSRF).
 - macOS: Node.js removed; the native app serves static files only and handles the API key over a
-  WKWebView bridge. Android: no local server or cleartext traffic; assets are served in-process.
+  WKWebView bridge.
 - Microphone permission and navigation are limited to the app's own page.
-- Optional "remember key" in the macOS Keychain / Android Keystore.
+- Optional "remember key" in the macOS Keychain.
 
 ### Reliability & performance
 - Automatic reconnect, rotation before the 60-minute session limit, graceful stop that keeps the last sentence.
@@ -40,7 +40,10 @@
 - Frontend split into ES modules; shared `realtime-config.json` for all backends.
 - Tests: unit, server security, session controller, Swift↔Node contract, offscreen WKWebView bridge test.
 - Version read from `VERSION` everywhere; universal macOS build (~2 MB, was 115 MB); non-relocatable pkg;
-  optional Developer ID signing/notarization and stable Android release signing in CI; Node 24 in CI.
+  optional Developer ID signing/notarization in CI; Node 24 in CI.
+
+### Removed
+- The Android app, its build script and CI jobs. Releases ship the macOS installer only.
 
 ## v0.3.0 - 2026-06-04
 

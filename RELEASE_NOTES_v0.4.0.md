@@ -1,7 +1,8 @@
 # Keynote Live Translator v0.4.0
 
 This release switches source captions to `gpt-live-transcribe`, fixes the transcript and export bugs
-found in v0.3, and rebuilds the macOS and Android hosts around a smaller, safer architecture.
+found in v0.3, and rebuilds the macOS app around a smaller, safer architecture. The Android app has
+been removed; releases ship the macOS installer only.
 
 ## Highlights
 

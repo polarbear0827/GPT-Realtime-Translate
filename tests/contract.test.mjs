@@ -1,6 +1,5 @@
 // The dev server (Node) and the macOS app (Swift) implement the same validation and OpenAI payloads.
 // This compiles the Swift rules and checks both produce identical results for the same fixtures.
-// (The Android Java implementation follows the same rules; it is compiled in CI.)
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";

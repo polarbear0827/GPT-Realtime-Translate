@@ -1,14 +1,12 @@
-// Host integration. The same UI runs in three hosts:
-//   macOS app   – WKWebView, native bridge window.webkit.messageHandlers.klt (replies via promises)
-//   Android app – WebView, native bridge window.KltAndroid (replies via window.__kltNativeResolve)
-//   browser     – `npm start` dev server, API over fetch with a per-launch token
-// Native hosts keep the API key and call OpenAI themselves, so no local HTTP API is exposed there.
+// Host integration. The same UI runs in two hosts:
+//   macOS app – WKWebView, native bridge window.webkit.messageHandlers.klt (replies via promises)
+//   browser   – `npm start` dev server, API over fetch with a per-launch token
+// The macOS app keeps the API key and calls OpenAI itself, so no local HTTP API is exposed there.
 
 export const platform = typeof window === "undefined" ? null : detectPlatform();
 
 function detectPlatform() {
   if (window.webkit?.messageHandlers?.klt) return createMacPlatform(window.webkit.messageHandlers.klt);
-  if (window.KltAndroid) return createAndroidPlatform(window.KltAndroid);
   return createWebPlatform();
 }
 
@@ -27,46 +25,6 @@ function createMacPlatform(handler) {
     setLeaveGuard: (enabled, message = "") => call({ action: "setLeaveGuard", enabled, message }).catch(() => {}),
     openDisplayWindow: () => call({ action: "openDisplayWindow" }),
     micHelp: "請到「系統設定 > 隱私權與安全性 > 麥克風」允許 Keynote Live Translator，然後重新開啟 App。",
-  };
-}
-
-function createAndroidPlatform(bridge) {
-  const pending = new Map();
-  let nextId = 1;
-  window.__kltNativeResolve = (id, json) => {
-    const entry = pending.get(id);
-    if (!entry) return;
-    pending.delete(id);
-    try {
-      entry.resolve(JSON.parse(json));
-    } catch (error) {
-      entry.reject(error);
-    }
-  };
-  const call = (method, ...args) =>
-    new Promise((resolve, reject) => {
-      const id = String(nextId++);
-      pending.set(id, { resolve, reject });
-      try {
-        bridge[method](id, ...args);
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-  return {
-    kind: "android",
-    info: async () => JSON.parse(bridge.info()),
-    request: (method, path, body) => call("request", JSON.stringify({ method, path, body: body ?? null })),
-    saveFile: (filename, mimeType, content) => call("saveFile", filename, mimeType, content),
-    setFullscreen: async (enabled) => {
-      bridge.setFullscreen(Boolean(enabled));
-      return { fullscreen: Boolean(enabled) };
-    },
-    setKeepAwake: async (enabled) => bridge.setKeepAwake(Boolean(enabled)),
-    setLeaveGuard: async (enabled, message = "") => bridge.setLeaveGuard(Boolean(enabled), message),
-    openDisplayWindow: null,
-    micHelp: "請到「設定 > 應用程式 > Keynote Live Translator > 權限」開啟麥克風，再回到 App 重試。",
   };
 }
 

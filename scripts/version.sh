@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Single source of truth for the version: the VERSION file.
 #   APP_VERSION   e.g. 0.4.0
-#   BUILD_NUMBER  monotonically increasing integer (major*10000 + minor*100 + patch), also used as the
-#                 Android versionCode and the macOS CFBundleVersion.
+#   BUILD_NUMBER  monotonically increasing integer (major*10000 + minor*100 + patch), used as the
+#                 macOS CFBundleVersion.
 set -euo pipefail
 
 VERSION_ROOT="$(cd "$(dirname "${(%):-%x}")/.." && pwd)"

@@ -6,7 +6,7 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 - Translated captions from `gpt-realtime-translate`.
 - Bilingual, translation-only, or source-only captions; 13 source and 13 target languages.
 - Transcript recording with SRT (source / translation / bilingual), Markdown, text and JSON export.
-- macOS app (universal, ~2 MB) and Android app, plus a browser version for development.
+- macOS app (universal, ~2 MB), plus a browser version for development.
 
 ## Current Version
 
@@ -17,10 +17,9 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 | Host | UI served from | API key & OpenAI calls | Local network port |
 |---|---|---|---|
 | macOS app | Swift static server on `127.0.0.1` | Native Swift via `WKScriptMessageHandlerWithReply` | Static files only (Host-checked) |
-| Android app | APK assets via `shouldInterceptRequest` on `https://appassets.androidplatform.net` | Native Java via `@JavascriptInterface` | None |
 | Browser (`npm start`) | Node dev server on `127.0.0.1` | Node, behind a per-launch token | Yes (Host/Origin/token-checked) |
 
-All three backends implement the same rules from [`public/realtime-config.json`](public/realtime-config.json)
+Both backends implement the same rules from [`public/realtime-config.json`](public/realtime-config.json)
 (models, languages, limits). `tests/contract.test.mjs` checks that the Node and Swift implementations
 produce identical OpenAI payloads and validation errors.
 
@@ -36,13 +35,13 @@ Realtime flow:
 ## Security Model
 
 - The OpenAI API key is entered by the user at runtime and is never embedded in the app.
-- By default the key lives in memory only. In the native apps the user can opt in to "記住金鑰":
-  macOS stores it in the login Keychain, Android encrypts it with an Android Keystore AES-GCM key.
+- By default the key lives in memory only. In the macOS app the user can opt in to "記住金鑰", which
+  stores it in the login Keychain.
 - The key is validated against OpenAI when saved, and only exchanged for short-lived Realtime client
   secrets; the page never sees the long-lived key.
 - The dev server rejects requests whose `Host` isn't `127.0.0.1`/`localhost` (DNS rebinding), whose
   `Origin` is foreign, that aren't `application/json`, or that lack the per-launch token embedded in the page.
-- Native apps don't expose the API over HTTP at all; the bridge only accepts calls from the app's own page.
+- The macOS app doesn't expose the API over HTTP at all; the bridge only accepts calls from the app's own page.
 
 ## Caption Modes
 
@@ -78,19 +77,9 @@ If the release isn't notarized and macOS blocks it: Finder → `/Applications` �
 
 Microphone: `System Settings > Privacy & Security > Microphone` → enable Keynote Live Translator.
 
-## Android
-
-The Android project in `android/` isn't built or published by CI. To build an APK locally, install the
-Android SDK + Gradle and run `npm run build:android`. Grant the microphone permission on first start.
-Requires Android 8.0+.
-
-Known limitation: Android stops microphone capture when the app is in the background, so keep the app
-in the foreground during a talk (the screen is kept on while captions are live).
-
 ## Local Development
 
-Requirements: Node.js 22+ (see `.nvmrc`), macOS + Xcode command line tools for the macOS app,
-Android SDK + Gradle for local Android builds (or use CI).
+Requirements: Node.js 22+ (see `.nvmrc`), macOS + Xcode command line tools for the macOS app.
 
 ```bash
 npm start            # dev server at http://127.0.0.1:8787 (add ?debug to expose internals in the console)
@@ -98,16 +87,15 @@ npm run check        # syntax check
 npm test             # unit, server security, session controller and Swift↔Node contract tests
 npm run test:macos   # runs the real UI in an offscreen WKWebView against the native bridge
 npm run build:pkg    # universal macOS app + installer in build/v<version>/
-npm run build:android
 ```
 
 ## Release Flow
 
-1. Update `VERSION` (the only place the version is written; Android, macOS and the UI read it) and
+1. Update `VERSION` (the only place the version is written; the macOS build and the UI read it) and
    `package.json` (a test checks they match).
 2. Add a `CHANGELOG.md` entry and `RELEASE_NOTES_v<version>.md`.
 3. Commit, tag `v<version>`, push. GitHub Actions verifies the tag matches `VERSION`, runs the tests and
-   publishes the macOS pkg. (Android isn't built in CI; use `npm run build:android` locally if needed.)
+   publishes the macOS pkg.
 
 ### Signing (optional, recommended)
 
