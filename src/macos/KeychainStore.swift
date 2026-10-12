@@ -1,13 +1,20 @@
 import Foundation
 import Security
 
+// Where a remembered API key is kept. Tests use an in-memory store so they never touch the user's Keychain.
+protocol KeyStoring {
+    func load() -> String?
+    @discardableResult func save(_ key: String) -> Bool
+    func delete()
+}
+
 // Optional persistence of the API key in the login Keychain. Only used when the user ticks
 // "記住金鑰"; otherwise the key stays in memory and is gone when the app quits.
-enum KeychainStore {
-    private static let service = "local.keynote-live-translator"
-    private static let account = "openai-api-key"
+struct KeychainStore: KeyStoring {
+    private let service = "local.keynote-live-translator"
+    private let account = "openai-api-key"
 
-    private static var baseQuery: [String: Any] {
+    private var baseQuery: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -16,7 +23,7 @@ enum KeychainStore {
     }
 
     @discardableResult
-    static func save(_ key: String) -> Bool {
+    func save(_ key: String) -> Bool {
         delete()
         var query = baseQuery
         query[kSecValueData as String] = Data(key.utf8)
@@ -25,7 +32,7 @@ enum KeychainStore {
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 
-    static func load() -> String? {
+    func load() -> String? {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -36,7 +43,7 @@ enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func delete() {
+    func delete() {
         SecItemDelete(baseQuery as CFDictionary)
     }
 }

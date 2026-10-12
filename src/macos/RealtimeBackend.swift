@@ -176,17 +176,19 @@ final class RealtimeBackend {
     private let rules: RealtimeRules
     private let version: String
     private let session: URLSession
+    private let keyStore: KeyStoring
     private var apiKey: String?
     private var rememberedKey = false
 
-    init(config: RealtimeConfig, version: String) {
+    init(config: RealtimeConfig, version: String, keyStore: KeyStoring = KeychainStore()) {
         rules = RealtimeRules(config: config)
         self.version = version
+        self.keyStore = keyStore
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.urlCache = nil
         session = URLSession(configuration: configuration)
-        if let stored = KeychainStore.load() {
+        if let stored = keyStore.load() {
             apiKey = stored
             rememberedKey = true
         }
@@ -204,16 +206,16 @@ final class RealtimeBackend {
                 apiKey = key
                 let remember = body["remember"] as? Bool ?? false
                 if remember {
-                    rememberedKey = KeychainStore.save(key)
+                    rememberedKey = keyStore.save(key)
                 } else {
-                    KeychainStore.delete()
+                    keyStore.delete()
                     rememberedKey = false
                 }
                 return (200, ["ok": true, "remembered": rememberedKey, "warnings": warnings])
             case ("DELETE", "/api/key"):
                 apiKey = nil
                 rememberedKey = false
-                KeychainStore.delete()
+                keyStore.delete()
                 return (200, ["ok": true])
             case ("POST", "/api/realtime/translation-client-secret"):
                 let params = try rules.validateTranslation(body)

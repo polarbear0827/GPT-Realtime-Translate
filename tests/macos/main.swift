@@ -5,6 +5,17 @@ import AppKit
 import Network
 import WebKit
 
+// Never read or write the user's real Keychain item from tests.
+final class MemoryKeyStore: KeyStoring {
+    private var key: String?
+    func load() -> String? { key }
+    func save(_ key: String) -> Bool {
+        self.key = key
+        return true
+    }
+    func delete() { key = nil }
+}
+
 @MainActor
 final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var server: StaticServer!
@@ -18,7 +29,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
-        let backend = RealtimeBackend(config: config, version: "0.0.0-test")
+        let backend = RealtimeBackend(config: config, version: "0.0.0-test", keyStore: MemoryKeyStore())
         bridge = NativeBridge(backend: backend, version: "0.0.0-test")
         bridge.host = self
         let configuration = WKWebViewConfiguration()
