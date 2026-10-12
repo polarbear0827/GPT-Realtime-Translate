@@ -20,10 +20,7 @@ found in v0.3, and rebuilds the macOS and Android hosts around a smaller, safer 
 
 - The transcript is no longer cleared when you press Start again; use 設定 > 清除逐字稿.
 - Settings from v0.3 carry over.
-- Android: if a previous version was installed from a debug build, uninstall it once before installing
-  this one (Android rejects updates signed with a different key).
 
 ## Install
 
-- macOS: `KeynoteLiveTranslator-0.4.0.pkg` (macOS 12.3 or later).
-- Android: the APK attached to this release (Android 8.0 or later).
+- macOS: `KeynoteLiveTranslator-0.4.0.pkg` (macOS 12.3 or later, Apple silicon and Intel).

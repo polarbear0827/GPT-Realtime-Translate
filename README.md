@@ -78,10 +78,11 @@ If the release isn't notarized and macOS blocks it: Finder → `/Applications` �
 
 Microphone: `System Settings > Privacy & Security > Microphone` → enable Keynote Live Translator.
 
-## Install On Android
+## Android
 
-Download the APK from GitHub Releases and install it (allow installs from your browser or file manager
-if asked). Grant the microphone permission on first start. Requires Android 8.0+.
+The Android project in `android/` isn't built or published by CI. To build an APK locally, install the
+Android SDK + Gradle and run `npm run build:android`. Grant the microphone permission on first start.
+Requires Android 8.0+.
 
 Known limitation: Android stops microphone capture when the app is in the background, so keep the app
 in the foreground during a talk (the screen is kept on while captions are live).
@@ -106,7 +107,7 @@ npm run build:android
    `package.json` (a test checks they match).
 2. Add a `CHANGELOG.md` entry and `RELEASE_NOTES_v<version>.md`.
 3. Commit, tag `v<version>`, push. GitHub Actions verifies the tag matches `VERSION`, runs the tests and
-   publishes the macOS pkg and Android APK.
+   publishes the macOS pkg. (Android isn't built in CI; use `npm run build:android` locally if needed.)
 
 ### Signing (optional, recommended)
 
@@ -115,9 +116,6 @@ Repository secrets used by the release workflow when present:
 - macOS: `MACOS_CERTIFICATES_P12` (base64 .p12 with Developer ID Application + Installer),
   `MACOS_CERTIFICATES_PASSWORD`, `MACOS_CODESIGN_IDENTITY`, `MACOS_INSTALLER_IDENTITY`, and for
   notarization `NOTARY_KEY_BASE64` (App Store Connect API key .p8), `NOTARY_KEY_ID`, `NOTARY_ISSUER`.
-- Android: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-  `ANDROID_KEY_PASSWORD`. Create the keystore once and keep it: every release must be signed with the
-  same key so users can upgrade in place. Without it, CI publishes a debug-signed APK.
 
 ## Notes
 
