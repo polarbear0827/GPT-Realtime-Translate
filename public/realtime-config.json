@@ -1,0 +1,38 @@
+{
+  "models": {
+    "translation": "gpt-realtime-translate",
+    "transcription": "gpt-live-transcribe"
+  },
+  "languages": {
+    "en": { "label": "English", "lang": "en", "cjk": false },
+    "zh": { "label": "中文", "targetLabel": "繁體中文", "lang": "zh-Hant", "cjk": true },
+    "ja": { "label": "日本語", "lang": "ja", "cjk": true },
+    "ko": { "label": "한국어", "lang": "ko", "cjk": false },
+    "es": { "label": "Español", "lang": "es", "cjk": false },
+    "fr": { "label": "Français", "lang": "fr", "cjk": false },
+    "de": { "label": "Deutsch", "lang": "de", "cjk": false },
+    "pt": { "label": "Português", "lang": "pt", "cjk": false },
+    "it": { "label": "Italiano", "lang": "it", "cjk": false },
+    "ru": { "label": "Русский", "lang": "ru", "cjk": false },
+    "hi": { "label": "हिन्दी", "lang": "hi", "cjk": false },
+    "id": { "label": "Bahasa Indonesia", "lang": "id", "cjk": false },
+    "vi": { "label": "Tiếng Việt", "lang": "vi", "cjk": false }
+  },
+  "translationOutputLanguages": ["zh", "en", "ja", "ko", "es", "fr", "de", "pt", "it", "ru", "hi", "id", "vi"],
+  "transcriptionLanguages": ["en", "zh", "ja", "ko", "es", "fr", "de", "pt", "it", "ru", "hi", "id", "vi"],
+  "transcriptionDelays": ["minimal", "low", "medium", "high", "xhigh"],
+  "noiseReductionTypes": ["near_field", "far_field"],
+  "defaults": {
+    "sourceLanguage": "en",
+    "targetLanguage": "zh",
+    "transcriptionDelay": "low",
+    "noiseReduction": "near_field"
+  },
+  "clientSecretTtlSeconds": 600,
+  "limits": {
+    "requestBodyMaxBytes": 16384,
+    "promptMaxChars": 500,
+    "keywordsMaxCount": 100,
+    "keywordMaxChars": 60
+  }
+}

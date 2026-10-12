@@ -2,169 +2,126 @@
 
 Local-first realtime subtitles for keynote talks, demos, and live presentations.
 
-The app supports:
-
-- Source captions from `gpt-realtime-whisper`.
-- Realtime translation from `gpt-realtime-translate`.
-- Bilingual captions, translation-only captions, or source-only captions.
-- macOS desktop window builds.
-- Android WebView app builds.
+- Source captions from `gpt-live-transcribe` (live transcription, with optional keywords and context).
+- Translated captions from `gpt-realtime-translate`.
+- Bilingual, translation-only, or source-only captions; 13 source and 13 target languages.
+- Transcript recording with SRT (source / translation / bilingual), Markdown, text and JSON export.
+- macOS app (universal, ~2 MB) and Android app, plus a browser version for development.
 
 ## Current Version
 
-`0.3.0`
+`0.4.0` — see [CHANGELOG.md](CHANGELOG.md).
+
+## Architecture
+
+| Host | UI served from | API key & OpenAI calls | Local network port |
+|---|---|---|---|
+| macOS app | Swift static server on `127.0.0.1` | Native Swift via `WKScriptMessageHandlerWithReply` | Static files only (Host-checked) |
+| Android app | APK assets via `shouldInterceptRequest` on `https://appassets.androidplatform.net` | Native Java via `@JavascriptInterface` | None |
+| Browser (`npm start`) | Node dev server on `127.0.0.1` | Node, behind a per-launch token | Yes (Host/Origin/token-checked) |
+
+All three backends implement the same rules from [`public/realtime-config.json`](public/realtime-config.json)
+(models, languages, limits). `tests/contract.test.mjs` checks that the Node and Swift implementations
+produce identical OpenAI payloads and validation errors.
+
+Realtime flow:
+
+- Translation: WebRTC to `/v1/realtime/translations/calls` with a short-lived client secret.
+- Transcription: WebSocket to `/v1/realtime` (`type: "transcription"`, `gpt-live-transcribe`). Audio is
+  converted to 24 kHz PCM16 in an AudioWorklet and committed at the end of each speech turn by a
+  client-side voice activity detector (the model has no server VAD).
+- Both connections reconnect automatically and are rotated before the 60-minute Realtime session limit.
+- Stop drains the last sentence (`session.close` → `session.closed`, and waiting for the final transcript).
 
 ## Security Model
 
-- The OpenAI API key is entered by the user at runtime.
-- The API key is kept in memory only.
-- The API key is not embedded in the app.
-- The API key is not written to disk.
-- The API key is not stored in browser/WebView localStorage.
-- The local server listens only on `127.0.0.1`.
-- The local server exchanges the API key for short-lived Realtime client secrets.
-- The UI connects to OpenAI with short-lived client secrets, not the long-lived API key.
+- The OpenAI API key is entered by the user at runtime and is never embedded in the app.
+- By default the key lives in memory only. In the native apps the user can opt in to "記住金鑰":
+  macOS stores it in the login Keychain, Android encrypts it with an Android Keystore AES-GCM key.
+- The key is validated against OpenAI when saved, and only exchanged for short-lived Realtime client
+  secrets; the page never sees the long-lived key.
+- The dev server rejects requests whose `Host` isn't `127.0.0.1`/`localhost` (DNS rebinding), whose
+  `Origin` is foreign, that aren't `application/json`, or that lack the per-launch token embedded in the page.
+- Native apps don't expose the API over HTTP at all; the bridge only accepts calls from the app's own page.
 
 ## Caption Modes
 
-### Bilingual Captions
+- **雙語字幕** — source + translation. The source track comes from `gpt-live-transcribe` (more accurate,
+  supports keywords) or, if chosen in 設定 > 辨識, from the translation session's own input transcript
+  (about half the audio cost).
+- **只顯示翻譯** — `gpt-realtime-translate` only. The source transcript is still recorded for export.
+- **只顯示原文** — `gpt-live-transcribe` only.
 
-Runs both realtime tracks:
+## Using It
 
-- `gpt-realtime-whisper` creates source captions.
-- `gpt-realtime-translate` creates translated captions.
+1. Open the app and enter your OpenAI API key (it's verified immediately).
+2. Pick the mode and languages, then **設定 > 收音 > 測試麥克風** to check the level.
+3. Optional: add keywords (speaker names, product names, jargon) and a short context description.
+4. Press **開始** (or Space). Use **投影模式** (F) for a clean caption screen, or
+   **開啟字幕視窗（第二螢幕）** to put captions on a projector while you keep the controls.
+5. After the talk, **匯出** the transcript or SRT. Subtitles are split into cues of at most 7 seconds
+   and two lines; use **SRT 時間偏移** to align them with a recording.
 
-### Translation Only
+Shortcuts: Space start/stop · P pause display · M new paragraph · F presentation mode · T transcript ·
++/− caption size · Esc close panels.
 
-Runs only `gpt-realtime-translate` and displays the selected translation language.
-
-### Source Only
-
-Runs only `gpt-realtime-whisper` and displays source-language captions.
-
-## Language Options
-
-The UI currently exposes:
-
-- Source captions: English, Chinese.
-- Translation target: Traditional Chinese, English.
-
-The backend keeps a whitelist for the official `gpt-realtime-translate` output languages, so more target languages can be added later without changing the architecture.
+The transcript is auto-saved on the device while recording (can be turned off in settings) and offered
+for restore after an unexpected close.
 
 ## Install On macOS
 
-1. Go to GitHub Releases.
-2. Download `KeynoteLiveTranslator-0.3.0.pkg`.
-3. Open the `.pkg` file.
-4. Install `Keynote Live Translator` into `/Applications`.
-5. Open the app.
+Download `KeynoteLiveTranslator-0.4.0.pkg` from GitHub Releases and open it. The app is installed to
+`/Applications` and runs on Apple silicon and Intel Macs with macOS 12.3 or later.
 
-If macOS blocks the app because it is not notarized yet:
+If the release isn't notarized and macOS blocks it: Finder → `/Applications` → right-click
+`Keynote Live Translator` → Open.
 
-1. Open Finder.
-2. Go to `/Applications`.
-3. Right-click `Keynote Live Translator`.
-4. Choose `Open`.
-5. Confirm launch.
-
-### macOS Microphone Permission
-
-1. Open `System Settings > Privacy & Security > Microphone`.
-2. Enable `Keynote Live Translator`.
-3. Restart the app.
-4. Click `測試麥克風`.
-5. Click `Start`.
+Microphone: `System Settings > Privacy & Security > Microphone` → enable Keynote Live Translator.
 
 ## Install On Android
 
-1. Go to GitHub Releases.
-2. Download `KeynoteLiveTranslator-android-0.3.0-debug.apk`.
-3. Open the APK on your Android phone.
-4. If Android asks for permission to install unknown apps, allow it for the file manager or browser you are using.
-5. Install and open `Keynote Live Translator`.
+Download the APK from GitHub Releases and install it (allow installs from your browser or file manager
+if asked). Grant the microphone permission on first start. Requires Android 8.0+.
 
-This APK is a debug-signed build for direct installation and testing. For Play Store or enterprise distribution, create a properly signed release build.
-
-### Android Microphone Permission
-
-1. Open the app.
-2. Allow microphone permission when Android asks.
-3. If permission was denied, open `Settings > Apps > Keynote Live Translator > Permissions`.
-4. Enable `Microphone`.
-5. Reopen the app and click `測試麥克風`.
-
-## First Run
-
-1. Open `Keynote Live Translator`.
-2. Click `輸入金鑰`.
-3. Paste your OpenAI API key.
-4. Select caption mode.
-5. Select source caption language.
-6. Select translation target language.
-7. Open `進階設定`.
-8. Click `測試麥克風`.
-9. Click `Start`.
-
-## Export
-
-Use `Export` to save:
-
-- Markdown transcript.
-- Plain text transcript.
-- JSON transcript.
-- SRT source captions.
-- SRT translation captions.
-- SRT bilingual captions.
+Known limitation: Android stops microphone capture when the app is in the background, so keep the app
+in the foreground during a talk (the screen is kept on while captions are live).
 
 ## Local Development
 
-Requirements:
-
-- Node.js 20 or newer for the web/local server.
-- macOS + Swift toolchain for macOS packaging.
-- Android SDK + Gradle for local Android APK builds.
-
-Run the local web app:
+Requirements: Node.js 22+ (see `.nvmrc`), macOS + Xcode command line tools for the macOS app,
+Android SDK + Gradle for local Android builds (or use CI).
 
 ```bash
-npm run start
-```
-
-Check JavaScript syntax:
-
-```bash
-npm run check
-```
-
-Build macOS pkg:
-
-```bash
-npm run build:pkg
-```
-
-Build Android APK locally:
-
-```bash
+npm start            # dev server at http://127.0.0.1:8787 (add ?debug to expose internals in the console)
+npm run check        # syntax check
+npm test             # unit, server security, session controller and Swift↔Node contract tests
+npm run test:macos   # runs the real UI in an offscreen WKWebView against the native bridge
+npm run build:pkg    # universal macOS app + installer in build/v<version>/
 npm run build:android
 ```
 
-If Gradle or Android SDK is not installed locally, use GitHub Actions. The CI workflow builds the Android APK on Ubuntu.
-
 ## Release Flow
 
-1. Update `VERSION`.
-2. Update `package.json`.
-3. Update Android `versionName` / `versionCode` in `android/app/build.gradle`.
-4. Update `CHANGELOG.md`.
-5. Add release notes, for example `RELEASE_NOTES_v0.3.0.md`.
-6. Commit changes.
-7. Tag the release, for example `v0.3.0`.
-8. Push `main` and the tag.
-9. GitHub Actions builds and uploads macOS pkg plus Android APK to the release.
+1. Update `VERSION` (the only place the version is written; Android, macOS and the UI read it) and
+   `package.json` (a test checks they match).
+2. Add a `CHANGELOG.md` entry and `RELEASE_NOTES_v<version>.md`.
+3. Commit, tag `v<version>`, push. GitHub Actions verifies the tag matches `VERSION`, runs the tests and
+   publishes the macOS pkg and Android APK.
+
+### Signing (optional, recommended)
+
+Repository secrets used by the release workflow when present:
+
+- macOS: `MACOS_CERTIFICATES_P12` (base64 .p12 with Developer ID Application + Installer),
+  `MACOS_CERTIFICATES_PASSWORD`, `MACOS_CODESIGN_IDENTITY`, `MACOS_INSTALLER_IDENTITY`, and for
+  notarization `NOTARY_KEY_BASE64` (App Store Connect API key .p8), `NOTARY_KEY_ID`, `NOTARY_ISSUER`.
+- Android: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+  `ANDROID_KEY_PASSWORD`. Create the keystore once and keep it: every release must be signed with the
+  same key so users can upgrade in place. Without it, CI publishes a debug-signed APK.
 
 ## Notes
 
-- Realtime Translation source language is detected automatically by the model.
-- `gpt-realtime-whisper` uses the selected source caption language.
-- If Chinese output appears Simplified, add the missing phrase to the fallback map in `public/app.js`.
+- `gpt-realtime-translate` detects the spoken language automatically; the source language setting is
+  used for `gpt-live-transcribe` and for labels.
+- Chinese output is converted to Taiwan Traditional Chinese with OpenCC at display/export time.
 - Keep API keys and private transcripts out of git.

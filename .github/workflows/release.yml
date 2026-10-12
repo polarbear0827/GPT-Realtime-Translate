@@ -9,19 +9,57 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Tag matches VERSION
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
 
-      - name: Check JavaScript syntax
-        run: npm run check
+      - name: Tests
+        run: npm run check && npm test
+
+  build-macos:
+    needs: verify
+    runs-on: macos-latest
+    env:
+      # Optional: set these repository secrets to ship a signed and notarized installer.
+      MACOS_CERTIFICATES_P12: ${{ secrets.MACOS_CERTIFICATES_P12 }}
+      MACOS_CERTIFICATES_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+      INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+      NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import signing certificates
+        if: env.MACOS_CERTIFICATES_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATES_P12" | base64 --decode > "$RUNNER_TEMP/certificates.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificates.p12" -P "$MACOS_CERTIFICATES_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+      - name: Prepare notarization key
+        if: env.NOTARY_KEY_BASE64 != ''
+        run: |
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
 
       - name: Build pkg
         run: npm run build:pkg
@@ -33,7 +71,14 @@ jobs:
           path: build/v*/KeynoteLiveTranslator-*.pkg
 
   build-android:
+    needs: verify
     runs-on: ubuntu-latest
+    env:
+      # Optional but recommended: a stable release keystore so installed apps can be upgraded in place.
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,8 +97,20 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Build Android APK
+      - name: Build signed release APK
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          gradle -p android assembleRelease
+          VERSION="$(cat VERSION)"
+          mkdir -p "build/v$VERSION"
+          cp android/app/build/outputs/apk/release/app-release.apk "build/v$VERSION/KeynoteLiveTranslator-android-$VERSION.apk"
+
+      - name: Build debug APK (no release keystore configured)
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: |
+          echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; publishing a debug-signed APK that cannot upgrade other installs in place."
           gradle -p android assembleDebug
           VERSION="$(cat VERSION)"
           mkdir -p "build/v$VERSION"

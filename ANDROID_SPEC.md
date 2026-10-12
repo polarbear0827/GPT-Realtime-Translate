@@ -2,66 +2,47 @@
 
 ## 目標
 
-讓 Keynote Live Translator 可以在 Android 手機上使用，保留目前桌面版的資安模型與響應式字幕 UI。
+在 Android 手機上使用與桌面版相同的字幕 UI 與資安模型。
 
 ## 架構
 
-- 原生 Android Java Activity。
-- Android WebView 載入本機 UI。
-- App 內啟動 Java localhost server。
-- Server 綁定 `127.0.0.1:8787`。
-- UI assets 直接使用 `public/` 目錄內容。
-- Android Gradle build 透過 GitHub Actions 產生 APK。
+- 原生 Java Activity + Android WebView，無 AndroidX 相依。
+- UI：`public/` 打包成 APK assets，透過 `WebViewClient.shouldInterceptRequest` 在 App 內提供，
+  網址為 `https://appassets.androidplatform.net/`（安全內容、不會連到網路）。
+- 不開任何本機連接埠，也不允許明文流量；其他 App 無法存取金鑰或連線權杖。
+- `NativeBridge`（`window.KltAndroid`）：API 呼叫、存檔（系統存檔對話框）、保持螢幕常亮、沉浸式全螢幕、離開確認；
+  只在 WebView 顯示 App 自己的頁面時回應。
+- `RealtimeBackend`：金鑰驗證與保管、向 OpenAI 換短效 client secret；規則與 `server/realtime.mjs` 相同。
+- `SecureKeyStore`：使用者勾選「記住金鑰」時，以 Android Keystore 的 AES-GCM 金鑰加密保存。
 
 ## 資安
 
-- API key 由使用者在手機 App 內輸入。
-- API key 只存在 Android app process 記憶體。
-- API key 不寫入 SharedPreferences。
-- API key 不寫入檔案。
-- API key 不寫入 WebView localStorage。
-- WebView 不直接持有長效 OpenAI API key。
-- 本機 server 以 API key 換取短效 Realtime client secrets。
-- WebView 使用短效 client secrets 連線 OpenAI Realtime。
+- 金鑰預設只存在記憶體；`allowBackup="false"`。
+- 麥克風權限只授予 App 自己的頁面；第一次使用時才向系統要求並在同意後繼續。
+- 外部連結交給系統瀏覽器，WebView 只能顯示 App 內頁面。
 
 ## 權限
 
-- `INTERNET`：連線 OpenAI API。
-- `RECORD_AUDIO`：收音產生字幕與翻譯。
-- `usesCleartextTraffic` + network security config：允許 WebView 連線本機 `127.0.0.1`。
+- `INTERNET`：連線 OpenAI。
+- `RECORD_AUDIO`：收音。
+- `MODIFY_AUDIO_SETTINGS`：WebView 的 WebRTC 音訊處理需要。
 
 ## UI/UX
 
-- 沿用桌面版字幕工作台，不做 landing page。
-- Android 直式小螢幕下：
-  - 控制列可捲動。
-  - 主要操作以 2 欄工具列呈現。
-  - 使用步驟預設收合。
-  - 字幕區保留最大可視高度。
-- 字幕模式：
-  - 雙語字幕。
-  - 只顯示翻譯。
-  - 只顯示原文。
-- 語言：
-  - 原文字幕：English / 中文。
-  - 翻譯目標：繁體中文 / English。
+- 沿用桌面版 UI；直播中手機版會收起模式與語言選單，讓字幕區更大。
+- Android 15（targetSdk 35）強制 edge-to-edge：App 依系統列、瀏海、鍵盤的 insets 自動留白。
+- 旋轉、分割畫面、摺疊機、深色模式切換不會重建 Activity，直播不中斷。
+- 直播中保持螢幕常亮；返回鍵在直播中或有未匯出逐字稿時會先確認；投影模式可用返回鍵離開。
+- WebView renderer 當掉時自動重建，頁面會提供還原自動備份的逐字稿。
 
-## 建置
+## 建置與簽章
 
-本機需要 Android SDK + Gradle：
-
-```bash
-npm run build:android
-```
-
-GitHub Actions 會自動在 release tag 時產生：
-
-```text
-KeynoteLiveTranslator-android-<version>-debug.apk
-```
+- `npm run build:android`；版本號與 versionCode 由 `VERSION` 計算。
+- 設定 `ANDROID_KEYSTORE_FILE`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`
+  時產生 release 簽章 APK；CI 由 GitHub secrets 提供。所有版本必須用同一把金鑰簽章才能覆蓋升級。
 
 ## 已知限制
 
-- 目前 APK 是 debug-signed，適合直接測試與內部使用。
-- 上架 Play Store 或正式分發前，需要 release signing。
-- 真機麥克風/WebRTC 行為仍需在 Android Chrome WebView 實機上測試。
+- Android 會在 App 進入背景時停止收音；演講中請保持 App 在前景（直播中螢幕會保持常亮）。
+- 字幕視窗（第二螢幕）在 Android 不提供。
+- 需在實機確認 WebRTC 與麥克風行為（本機無法編譯 Android；CI 會建置並跑 lint）。
