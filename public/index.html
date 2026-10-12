@@ -2,125 +2,295 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <meta name="klt-token" content="__KLT_TOKEN__" />
     <title>Keynote Live Translator</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
-      <header class="control-bar" id="controlBar">
-        <div class="brand">
-          <span class="status-dot" id="statusDot"></span>
-          <div>
+      <header class="topbar" id="topbar">
+        <div class="status-area" role="status" aria-live="polite">
+          <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+          <div class="status-text">
             <h1>Keynote Live Translator</h1>
-            <p id="statusLine">Idle · Key Missing · 0 segments</p>
+            <p>
+              <span id="statusLabel">待命</span>
+              <span class="status-sep" aria-hidden="true">·</span>
+              <span id="elapsed">00:00</span>
+              <span class="status-sep" aria-hidden="true">·</span>
+              <span id="entryCount">0 句</span>
+            </p>
           </div>
+          <div class="connection-pills">
+            <span class="pill" id="transcribePill" data-state="off">轉錄</span>
+            <span class="pill" id="translatePill" data-state="off">翻譯</span>
+          </div>
+          <div class="level-meter" id="levelMeter" title="麥克風音量" aria-hidden="true"><span></span></div>
         </div>
 
-        <div class="control-groups">
-          <div class="control-group primary-actions">
-            <button id="openKeyBtn">金鑰</button>
-            <button id="startBtn" class="primary">Start</button>
-            <button id="stopBtn">Stop</button>
-            <button id="recordBtn" class="active">Record</button>
-            <select id="captionModeSelect" aria-label="字幕模式">
-              <option value="bilingual">雙語字幕</option>
-              <option value="translation">只顯示翻譯</option>
-              <option value="source">只顯示原文</option>
-            </select>
-            <label class="compact-select">原文
-              <select id="sourceLanguageSelect" aria-label="原文字幕語言">
-                <option value="en">English</option>
-                <option value="zh">中文</option>
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <button id="startStopBtn" class="primary start-stop" type="button">開始</button>
+            <label class="select-field">
+              <span>模式</span>
+              <select id="captionModeSelect">
+                <option value="bilingual">雙語字幕</option>
+                <option value="translation">只顯示翻譯</option>
+                <option value="source">只顯示原文</option>
               </select>
             </label>
-            <label class="compact-select">翻譯
-              <select id="targetLanguageSelect" aria-label="翻譯目標語言">
-                <option value="zh">繁體中文</option>
-                <option value="en">English</option>
-              </select>
+            <label class="select-field">
+              <span>原文</span>
+              <select id="sourceLanguageSelect"></select>
             </label>
-            <select id="exportSelect" aria-label="Export transcript">
-              <option value="">Export</option>
-              <option value="md">Markdown</option>
-              <option value="txt">Text</option>
-              <option value="json">JSON</option>
-              <option value="srt-translation">SRT 翻譯</option>
-              <option value="srt-source">SRT 原文</option>
-              <option value="srt-bilingual">SRT 雙語</option>
-            </select>
-            <button id="fullscreenBtn">Fullscreen</button>
+            <label class="select-field">
+              <span>翻譯</span>
+              <select id="targetLanguageSelect"></select>
+            </label>
           </div>
-          <details class="control-details help-details">
-            <summary>使用步驟</summary>
-            <ol>
-              <li>按「金鑰」貼上 OpenAI API key。</li>
-              <li>選擇原文與翻譯語言後按「Start」。</li>
-              <li>需要影片字幕時，用「Export」輸出 SRT。</li>
-            </ol>
-          </details>
-          <details class="control-details">
-            <summary>進階設定</summary>
-            <div class="control-group advanced-controls">
-              <label>Mic <select id="micSelect"><option value="">Default</option></select></label>
-              <label>EN 字體 <input id="sourceFont" type="range" min="24" max="92" value="48" /></label>
-              <label>ZH 字體 <input id="translatedFont" type="range" min="28" max="110" value="62" /></label>
-              <button id="pauseBtn">Pause Display</button>
-              <button id="audioBtn">Audio</button>
-              <button id="micTestBtn">測試麥克風</button>
-              <button id="markBtn">Mark Paragraph</button>
-              <button id="clearCaptionsBtn">Clear Captions</button>
-              <button id="clearTranscriptBtn">Clear Transcript</button>
-              <button id="clearKeyBtn">清除金鑰</button>
+          <div class="toolbar-group">
+            <button id="recordBtn" type="button" aria-pressed="true" title="記錄逐字稿（可匯出 SRT）">記錄逐字稿</button>
+            <div class="menu-anchor">
+              <button id="exportBtn" type="button" aria-haspopup="menu" aria-expanded="false">匯出</button>
+              <div class="menu" id="exportMenu" role="menu" hidden>
+                <button type="button" role="menuitem" data-export="srt-bilingual">SRT 雙語字幕</button>
+                <button type="button" role="menuitem" data-export="srt-translation">SRT 翻譯字幕</button>
+                <button type="button" role="menuitem" data-export="srt-source">SRT 原文字幕</button>
+                <hr />
+                <button type="button" role="menuitem" data-export="md">Markdown 逐字稿</button>
+                <button type="button" role="menuitem" data-export="txt">純文字逐字稿</button>
+                <button type="button" role="menuitem" data-export="json">JSON（完整資料）</button>
+              </div>
             </div>
-          </details>
+            <button id="presentBtn" type="button" title="投影模式（F）">投影模式</button>
+            <button id="transcriptBtn" type="button" aria-pressed="false" aria-controls="transcriptPanel" title="逐字稿（T）">逐字稿</button>
+            <button id="settingsBtn" type="button" aria-pressed="false" aria-controls="settingsPanel" title="設定">設定</button>
+            <button id="keyBtn" type="button">輸入金鑰</button>
+          </div>
         </div>
       </header>
 
-      <div class="error-banner" id="errorBanner" hidden></div>
-
       <main class="caption-layout" id="captionLayout">
-        <section class="caption-pane">
-          <header class="pane-header"><span>Original</span><strong id="sourceLanguageLabel">English</strong></header>
-          <div class="caption-text" id="sourceCaption"><span class="placeholder">等待語音輸入...</span></div>
+        <section class="caption-pane" id="sourcePane" aria-label="原文字幕">
+          <header class="pane-header"><span>原文</span><strong id="sourceLanguageLabel">English</strong></header>
+          <div class="caption-text" id="sourceCaption" aria-live="off"></div>
+          <div class="paused-badge" hidden>已暫停顯示</div>
         </section>
-        <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"><span></span></div>
-        <section class="caption-pane caption-pane-emphasis">
+        <div
+          class="splitter"
+          id="splitter"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="調整原文與翻譯的高度比例"
+          aria-valuemin="22"
+          aria-valuemax="78"
+          tabindex="0"
+        ><span></span></div>
+        <section class="caption-pane caption-pane-emphasis" id="translationPane" aria-label="翻譯字幕">
           <header class="pane-header"><span>翻譯</span><strong id="targetLanguageLabel">繁體中文</strong></header>
-          <div class="caption-text" id="translatedCaption"><span class="placeholder">等待翻譯...</span></div>
+          <div class="caption-text" id="translatedCaption" aria-live="off"></div>
+          <div class="paused-badge" hidden>已暫停顯示</div>
         </section>
       </main>
 
-      <aside class="transcript-panel" id="transcriptPanel">
-        <button class="panel-tab" id="transcriptToggle">Transcript</button>
-        <div class="transcript-scroll" id="transcriptScroll">
-          <p class="placeholder compact">逐字稿會在開始 Record 後出現在這裡。</p>
-        </div>
-      </aside>
+      <button class="exit-presentation" id="exitPresentBtn" type="button" hidden>離開投影模式（Esc）</button>
     </div>
 
-    <div class="modal-backdrop" id="keyModal">
-      <form class="modal" id="keyForm">
-        <div>
-          <p class="eyebrow">Local secure session</p>
-          <h2>輸入 OpenAI API key</h2>
-          <p class="modal-copy">
-            金鑰只會送到本機後端並存在記憶體，用來換短效 Realtime token；不會寫入檔案、瀏覽器儲存或日誌。
-          </p>
-        </div>
+    <aside class="drawer" id="transcriptPanel" aria-label="逐字稿" hidden>
+      <header class="drawer-header">
+        <h2>逐字稿</h2>
+        <button type="button" class="ghost" data-close-drawer>關閉</button>
+      </header>
+      <div class="transcript-scroll" id="transcriptScroll">
+        <p class="empty-state" id="transcriptEmpty">開始後，逐字稿會出現在這裡。</p>
+      </div>
+      <button type="button" class="jump-latest" id="jumpLatestBtn" hidden>跳到最新 ↓</button>
+    </aside>
+
+    <aside class="drawer settings" id="settingsPanel" aria-label="設定" hidden>
+      <header class="drawer-header">
+        <h2>設定</h2>
+        <button type="button" class="ghost" data-close-drawer>關閉</button>
+      </header>
+      <div class="drawer-body">
+        <p class="settings-note" id="liveSettingsNote" hidden>直播中無法變更收音與辨識設定，停止後再調整。</p>
+
+        <section class="settings-section">
+          <h3>收音</h3>
+          <label class="field">
+            <span>麥克風</span>
+            <select id="micSelect"><option value="">系統預設</option></select>
+          </label>
+          <div class="field-row">
+            <button id="micTestBtn" type="button">測試麥克風</button>
+            <span class="field-hint" id="micTestResult"></span>
+          </div>
+          <div class="level-meter large" id="micTestMeter" hidden><span></span></div>
+          <label class="field">
+            <span>音訊處理</span>
+            <select id="micProcessingSelect">
+              <option value="standard">標準（降噪、回音消除、自動增益）</option>
+              <option value="raw">原音（混音器或錄音介面輸入）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>收音距離</span>
+            <select id="noiseReductionSelect">
+              <option value="near_field">近距離（領夾、頭戴、手持麥克風）</option>
+              <option value="far_field">遠距離（會場或桌上麥克風）</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="settings-section">
+          <h3>辨識</h3>
+          <label class="field">
+            <span>雙語模式的原文來源</span>
+            <select id="bilingualEngineSelect">
+              <option value="dual">轉錄模型（較準、可用關鍵字）</option>
+              <option value="translate">翻譯模型附帶的原文（費用約減半）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>轉錄延遲</span>
+            <select id="delaySelect">
+              <option value="minimal">最即時</option>
+              <option value="low">低延遲（建議）</option>
+              <option value="medium">平衡</option>
+              <option value="high">較準確</option>
+              <option value="xhigh">最準確</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>關鍵字（講者、產品、術語，每行一個）</span>
+            <textarea id="keywordsInput" rows="4" spellcheck="false" placeholder="例如：&#10;OpenAI&#10;Keynote Live Translator"></textarea>
+          </label>
+          <label class="field">
+            <span>情境說明（選填）</span>
+            <textarea id="promptInput" rows="3" maxlength="500" placeholder="例如：AI 開發者大會的產品發表演講"></textarea>
+          </label>
+          <p class="field-hint">關鍵字與情境說明只用於轉錄模型（gpt-live-transcribe）。</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>顯示</h3>
+          <label class="field">
+            <span>原文字級 <output id="sourceFontValue"></output></span>
+            <input id="sourceFont" type="range" min="20" max="120" step="2" />
+          </label>
+          <label class="field">
+            <span>翻譯字級 <output id="translatedFontValue"></output></span>
+            <input id="translatedFont" type="range" min="20" max="140" step="2" />
+          </label>
+          <label class="switch">
+            <input id="playAudioToggle" type="checkbox" />
+            <span>播放翻譯語音</span>
+          </label>
+          <label class="field">
+            <span>投影背景</span>
+            <select id="displayBackgroundSelect">
+              <option value="dark">深色</option>
+              <option value="black">純黑</option>
+              <option value="green">綠幕（去背用）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>字幕對齊</span>
+            <select id="displayAlignSelect">
+              <option value="left">靠左</option>
+              <option value="center">置中</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <button id="pauseBtn" type="button" aria-pressed="false">暫停顯示</button>
+            <button id="displayWindowBtn" type="button">開啟字幕視窗（第二螢幕）</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>逐字稿與匯出</h3>
+          <label class="switch">
+            <input id="autoBackupToggle" type="checkbox" />
+            <span>自動備份逐字稿（只存在這台裝置，避免意外關閉時遺失）</span>
+          </label>
+          <label class="field">
+            <span>翻譯延遲補償（毫秒）</span>
+            <input id="latencyInput" type="number" min="0" max="5000" step="100" />
+          </label>
+          <label class="field">
+            <span>SRT 時間偏移（毫秒，負值＝提早）</span>
+            <input id="srtOffsetInput" type="number" min="-10000" max="10000" step="100" />
+          </label>
+          <div class="field-row">
+            <button id="markBtn" type="button">手動分段</button>
+            <button id="clearCaptionsBtn" type="button">清除字幕畫面</button>
+          </div>
+          <div class="field-row">
+            <button id="clearTranscriptBtn" type="button" class="danger">清除逐字稿</button>
+            <button id="clearKeyBtn" type="button" class="danger">清除金鑰</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>快捷鍵</h3>
+          <dl class="shortcuts">
+            <dt>Space</dt><dd>開始 / 停止</dd>
+            <dt>P</dt><dd>暫停 / 恢復字幕顯示</dd>
+            <dt>M</dt><dd>手動分段</dd>
+            <dt>F</dt><dd>投影模式</dd>
+            <dt>T</dt><dd>逐字稿</dd>
+            <dt>+ / −</dt><dd>放大 / 縮小字幕</dd>
+            <dt>Esc</dt><dd>關閉面板、離開投影模式</dd>
+          </dl>
+          <p class="field-hint" id="versionLabel"></p>
+        </section>
+      </div>
+    </aside>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <dialog class="dialog" id="keyDialog" aria-labelledby="keyDialogTitle">
+      <form method="dialog" id="keyForm">
+        <p class="eyebrow">本機安全連線</p>
+        <h2 id="keyDialogTitle">輸入 OpenAI API key</h2>
+        <p class="dialog-copy" id="keyDialogCopy">
+          金鑰只交給這台裝置上的本機服務，用來換取短效的連線權杖；不會寫入檔案、瀏覽器儲存或日誌。
+        </p>
         <label class="field">
           <span>API key</span>
-          <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+          <span class="input-with-button">
+            <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+            <button type="button" id="toggleKeyVisibility" class="ghost" aria-pressed="false">顯示</button>
+          </span>
         </label>
-        <p class="error-text" id="keyError" hidden></p>
-        <div class="modal-actions">
-          <button type="submit" class="primary">儲存金鑰</button>
-          <button type="button" id="closeModalBtn">稍後再說</button>
+        <label class="switch" id="rememberKeyField" hidden>
+          <input id="rememberKeyToggle" type="checkbox" />
+          <span id="rememberKeyLabel">記住金鑰（存在系統的安全儲存區）</span>
+        </label>
+        <p class="error-text" id="keyError" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" id="cancelKeyBtn" value="cancel">稍後再說</button>
+          <button type="submit" id="saveKeyBtn" class="primary">儲存並驗證</button>
         </div>
       </form>
-    </div>
+    </dialog>
 
-    <script src="/vendor/opencc-cn2t.js"></script>
-    <script src="/app.js"></script>
+    <dialog class="dialog" id="confirmDialog" aria-labelledby="confirmMessage">
+      <form method="dialog">
+        <p id="confirmMessage"></p>
+        <div class="dialog-actions">
+          <button type="submit" value="cancel" id="confirmCancelBtn">取消</button>
+          <button type="submit" value="ok" id="confirmOkBtn" class="danger">確定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/js/main.js"></script>
   </body>
 </html>

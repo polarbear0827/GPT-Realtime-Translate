@@ -1,0 +1,207 @@
+// Transcript store. Source and translation are kept as independent tracks of timed entries:
+// - transcription items (one per committed speech turn) are keyed by the API item_id
+// - streamed text (translation output, translate input transcript) is split into sentences here
+// Exporters align the two tracks by time, so a lagging translation never shifts the source text.
+// Text is stored as received (possibly Simplified Chinese); conversion happens at display/export time.
+
+import { lastSentenceBoundary } from "./text.js";
+
+const STREAM_MAX_CHARS = { cjk: 80, other: 220 };
+
+export class TranscriptStore {
+  constructor() {
+    this.listeners = new Set();
+    this.reset();
+  }
+
+  reset() {
+    this.entries = [];
+    this.byId = new Map();
+    this.byItem = new Map();
+    this.streams = new Map();
+    this.epochPerf = null;
+    this.epochWall = null;
+    this.nextId = 1;
+    this.revision = 0;
+    this.savedRevision = 0;
+    this.emit({ type: "reset" });
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(change) {
+    if (change.type !== "reset") this.revision += 1;
+    for (const listener of this.listeners) listener(change);
+  }
+
+  // The timeline starts at the first recording and keeps running across Stop/Start, so a resumed
+  // session continues the same transcript instead of restarting at 00:00.
+  ensureEpoch(nowPerf, nowWall = Date.now()) {
+    if (this.epochPerf === null) {
+      this.epochPerf = nowPerf;
+      this.epochWall = nowWall;
+    }
+  }
+
+  relative(nowPerf) {
+    return this.epochPerf === null ? 0 : Math.max(0, nowPerf - this.epochPerf);
+  }
+
+  get isEmpty() {
+    return !this.entries.some((entry) => entry.text.trim());
+  }
+
+  get hasUnsavedChanges() {
+    return this.revision !== this.savedRevision && !this.isEmpty;
+  }
+
+  markSaved() {
+    this.savedRevision = this.revision;
+  }
+
+  track(name) {
+    return this.entries.filter((entry) => entry.track === name && entry.text.trim());
+  }
+
+  create(fields) {
+    const entry = { id: `e${this.nextId++}`, final: false, text: "", ...fields };
+    this.entries.push(entry);
+    this.byId.set(entry.id, entry);
+    this.emit({ type: "add", entry });
+    return entry;
+  }
+
+  remove(entry) {
+    this.entries = this.entries.filter((item) => item !== entry);
+    this.byId.delete(entry.id);
+    this.emit({ type: "remove", entry });
+  }
+
+  // Transcription items: deltas append, the completed transcript replaces.
+  upsertItem(itemKey, { track = "source", language, startMs, endMs, delta, transcript }) {
+    let entry = this.byItem.get(itemKey);
+    if (!entry) {
+      const start = startMs ?? endMs ?? 0;
+      entry = this.create({ track, language, startMs: start, endMs: Math.max(start, endMs ?? start) });
+      this.byItem.set(itemKey, entry);
+    }
+    if (typeof delta === "string") entry.text += delta;
+    if (typeof transcript === "string") {
+      entry.text = transcript;
+      entry.final = true;
+    }
+    // Times are authoritative when given: the VAD knows the turn's real start/end once it's committed.
+    if (typeof startMs === "number") entry.startMs = startMs;
+    if (typeof endMs === "number") entry.endMs = endMs;
+    entry.endMs = Math.max(entry.endMs, entry.startMs + 300);
+    if (entry.final && !entry.text.trim()) {
+      this.byItem.delete(itemKey);
+      this.remove(entry);
+      return null;
+    }
+    this.emit({ type: "update", entry });
+    return entry;
+  }
+
+  // Streamed text: deltas are appended verbatim (repeated characters such as 謝謝 are kept) and the
+  // stream is cut into sentence entries at confirmed sentence boundaries.
+  appendStream(streamKey, { track, language, delta, atMs, cjk }) {
+    if (!delta) return;
+    let entry = this.openStream(streamKey);
+    if (!entry) {
+      entry = this.create({ track, language, startMs: atMs, endMs: atMs, text: "" });
+      this.streams.set(streamKey, entry);
+    }
+    const previousLength = entry.text.length;
+    const previousEnd = entry.endMs;
+    entry.text += delta;
+    entry.endMs = Math.max(entry.endMs, atMs);
+
+    const boundary = lastSentenceBoundary(entry.text);
+    const maxChars = cjk ? STREAM_MAX_CHARS.cjk : STREAM_MAX_CHARS.other;
+    if (boundary > 0) {
+      // A sentence end is only confirmed by the next delta; the sentence itself ended when its
+      // terminator arrived, not when the following sentence started.
+      this.splitStream(streamKey, entry, boundary, atMs, boundary <= previousLength ? previousEnd : atMs);
+    } else if (entry.text.length > maxChars) {
+      const clause = Math.max(entry.text.lastIndexOf("，"), entry.text.lastIndexOf(", "), entry.text.lastIndexOf("、"));
+      this.splitStream(streamKey, entry, clause > maxChars / 3 ? clause + 1 : entry.text.length, atMs, atMs);
+    } else {
+      this.emit({ type: "update", entry });
+    }
+  }
+
+  splitStream(streamKey, entry, index, atMs, headEndMs) {
+    const rest = entry.text.slice(index).trimStart();
+    entry.text = entry.text.slice(0, index).trim();
+    entry.endMs = Math.max(entry.startMs, headEndMs);
+    entry.final = true;
+    this.emit({ type: "update", entry });
+    if (rest) {
+      const next = this.create({ track: entry.track, language: entry.language, startMs: atMs, endMs: atMs, text: rest });
+      this.streams.set(streamKey, next);
+    } else {
+      this.streams.delete(streamKey);
+    }
+  }
+
+  openStream(streamKey) {
+    return this.streams.get(streamKey) ?? null;
+  }
+
+  // Ends the open sentence of a stream (speaker paused or paragraph marked).
+  sealStream(streamKey) {
+    const entry = this.streams.get(streamKey);
+    if (!entry) return;
+    this.streams.delete(streamKey);
+    entry.text = entry.text.trim();
+    entry.final = true;
+    if (!entry.text) this.remove(entry);
+    else this.emit({ type: "update", entry });
+  }
+
+  sealAll() {
+    for (const key of [...this.streams.keys()]) this.sealStream(key);
+    for (const [itemKey, entry] of this.byItem) {
+      if (!entry.final && entry.text.trim()) {
+        entry.final = true;
+        this.emit({ type: "update", entry });
+      }
+      this.byItem.delete(itemKey);
+    }
+  }
+
+  toJSON() {
+    return {
+      format: "keynote-live-translator/transcript",
+      version: 1,
+      startedAt: this.epochWall ? new Date(this.epochWall).toISOString() : null,
+      entries: this.entries
+        .filter((entry) => entry.text.trim())
+        .map(({ id, track, language, startMs, endMs, text, final }) => ({ id, track, language, startMs, endMs, text, final })),
+    };
+  }
+
+  restore(data, nowPerf) {
+    if (data?.format !== "keynote-live-translator/transcript" || !Array.isArray(data.entries)) return false;
+    this.reset();
+    const entries = data.entries.filter((entry) => typeof entry?.text === "string" && entry.text.trim());
+    for (const entry of entries) {
+      this.create({
+        track: entry.track === "translation" ? "translation" : "source",
+        language: String(entry.language || ""),
+        startMs: Number(entry.startMs) || 0,
+        endMs: Number(entry.endMs) || 0,
+        text: entry.text,
+        final: true,
+      });
+    }
+    const lastEnd = Math.max(0, ...this.entries.map((entry) => entry.endMs));
+    this.epochPerf = nowPerf - lastEnd - 1000;
+    this.epochWall = data.startedAt ? Date.parse(data.startedAt) || Date.now() : Date.now();
+    return true;
+  }
+}

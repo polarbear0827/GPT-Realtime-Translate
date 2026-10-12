@@ -1,24 +1,36 @@
 import { createServer } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname, join, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  ValidationError,
+  buildTranscriptionSecretRequest,
+  buildTranslationSecretRequest,
+  validateApiKeyFormat,
+  validateTranscriptionRequest,
+  validateTranslationRequest,
+} from "./realtime.mjs";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const root = normalize(join(__dirname, ".."));
-const publicDir = join(root, "public");
-const port = Number(process.env.PORT || 8787);
-const appVersion = process.env.APP_VERSION || "0.3.0";
-let apiKey = null;
+const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const publicDir = join(rootDir, "public");
+const config = JSON.parse(readFileSync(join(publicDir, "realtime-config.json"), "utf8"));
+const appVersion = readFileSync(join(rootDir, "VERSION"), "utf8").trim();
+const UPSTREAM_TIMEOUT_MS = 15_000;
+const OPENAI = "https://api.openai.com/v1";
 
-const translationOutputLanguages = new Set(["es", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "vi", "it", "en"]);
-const transcriptionLanguages = new Set(["en", "zh"]);
+const CONTENT_SECURITY_POLICY =
+  "default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; " +
+  "img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; " +
+  "base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
 
 const securityHeaders = {
-  "Content-Security-Policy":
-    "default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
+  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
+  "Cross-Origin-Opener-Policy": "same-origin",
   "Permissions-Policy": "microphone=(self), camera=(), geolocation=(), payment=()",
 };
 
@@ -28,207 +40,241 @@ const contentTypes = {
   ".js": "text/javascript;charset=utf-8",
   ".json": "application/json;charset=utf-8",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
 };
 
-const server = createServer(async (req, res) => {
-  for (const [key, value] of Object.entries(securityHeaders)) {
-    res.setHeader(key, value);
-  }
+export function startServer({ port = Number(process.env.PORT || 8787), host = "127.0.0.1" } = {}) {
+  // Per-launch secret: only the page served by this process knows it, so other local programs and
+  // cross-site / DNS-rebinding requests cannot use the API key even though they can reach the port.
+  const token = randomBytes(24).toString("base64url");
+  let apiKey = null;
+  let actualPort = port;
 
-  if (!isLocalhost(req.socket.remoteAddress)) {
-    sendJson(res, 403, { error: "Localhost access only." });
-    return;
-  }
+  const server = createServer(async (req, res) => {
+    for (const [key, value] of Object.entries(securityHeaders)) res.setHeader(key, value);
 
-  try {
-    if (req.url === "/api/health" && req.method === "GET") {
-      sendJson(res, 200, { ok: true, version: appVersion, hasApiKey: Boolean(apiKey) });
+    if (!isAllowedHost(req.headers.host, actualPort) || !isAllowedOrigin(req.headers.origin, actualPort)) {
+      sendJson(res, 403, { error: "Forbidden." });
       return;
     }
 
-    if (req.url === "/api/key" && req.method === "POST") {
-      const body = await readJson(req, 8_192);
-      const key = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-      if (!key.startsWith("sk-") || key.length < 20) {
-        sendJson(res, 400, { error: "Invalid API key format." });
+    const url = new URL(req.url || "/", `http://${host}`);
+    try {
+      if (url.pathname.startsWith("/api/")) {
+        if (!hasValidToken(req.headers["x-klt-token"], token)) {
+          sendJson(res, 403, { error: "Forbidden." });
+          return;
+        }
+        await handleApi(req, res, url.pathname);
+        return;
+      }
+      if (req.method === "GET" || req.method === "HEAD") {
+        await serveStatic(req, res, url.pathname, token);
+        return;
+      }
+      sendJson(res, 405, { error: "Method not allowed." });
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        sendJson(res, error.status, { error: error.message });
+      } else {
+        console.error("Request failed:", error?.message || error);
+        sendJson(res, 500, { error: "Internal server error." });
+      }
+    }
+  });
+
+  async function handleApi(req, res, pathname) {
+    res.setHeader("Cache-Control", "no-store");
+
+    if (pathname === "/api/health" && req.method === "GET") {
+      sendJson(res, 200, { ok: true, version: appVersion, hasApiKey: Boolean(apiKey), rememberedKey: false });
+      return;
+    }
+
+    if (pathname === "/api/key" && req.method === "POST") {
+      const body = await readJson(req);
+      const key = validateApiKeyFormat(body.apiKey);
+      const verification = await verifyApiKey(key);
+      if (verification.rejected) {
+        sendJson(res, 400, { error: verification.rejected });
         return;
       }
       apiKey = key;
-      sendJson(res, 200, { ok: true });
+      // The dev server never persists keys; "remember" is only offered by the native apps.
+      sendJson(res, 200, { ok: true, remembered: false, warnings: verification.warnings });
       return;
     }
 
-    if (req.url === "/api/key" && req.method === "DELETE") {
+    if (pathname === "/api/key" && req.method === "DELETE") {
       apiKey = null;
       sendJson(res, 200, { ok: true });
       return;
     }
 
-    if (req.url === "/api/realtime/translation-client-secret" && req.method === "POST") {
-      if (!apiKey) {
-        sendJson(res, 401, { error: "API key is not set." });
-        return;
-      }
-
-      const body = await readJson(req, 8_192);
-      const targetLanguage = typeof body.targetLanguage === "string" ? body.targetLanguage : "zh";
-      if (!translationOutputLanguages.has(targetLanguage)) {
-        sendJson(res, 400, { error: "Unsupported translation target language." });
-        return;
-      }
-      const safetyIdentifier =
-        typeof body.safetyIdentifier === "string" && body.safetyIdentifier.length <= 80
-          ? body.safetyIdentifier
-          : "local-keynote-user";
-
-      try {
-        const upstream = await fetch("https://api.openai.com/v1/realtime/translations/client_secrets", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "OpenAI-Safety-Identifier": safetyIdentifier,
-          },
-          body: JSON.stringify({
-            session: {
-              model: "gpt-realtime-translate",
-              audio: {
-                input: {
-                  noise_reduction: {
-                    type: "near_field",
-                  },
-                },
-                output: {
-                  language: targetLanguage,
-                },
-              },
-            },
-          }),
-        });
-        const text = await upstream.text();
-        res.writeHead(upstream.status, { "Content-Type": "application/json;charset=utf-8" });
-        res.end(text);
-      } catch {
-        sendJson(res, 502, { error: "Unable to create a realtime translation client secret." });
-      }
+    if (pathname === "/api/realtime/translation-client-secret" && req.method === "POST") {
+      const params = validateTranslationRequest(await readJson(req), config);
+      await proxyClientSecret(res, `${OPENAI}/realtime/translations/client_secrets`, buildTranslationSecretRequest(params, config));
       return;
     }
 
-    if (req.url === "/api/realtime/transcription-client-secret" && req.method === "POST") {
-      if (!apiKey) {
-        sendJson(res, 401, { error: "API key is not set." });
-        return;
-      }
-
-      const body = await readJson(req, 8_192);
-      const delay = typeof body.delay === "string" ? body.delay : "low";
-      const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage : "en";
-      if (!transcriptionLanguages.has(sourceLanguage)) {
-        sendJson(res, 400, { error: "Unsupported transcription source language." });
-        return;
-      }
-      const safetyIdentifier =
-        typeof body.safetyIdentifier === "string" && body.safetyIdentifier.length <= 80
-          ? body.safetyIdentifier
-          : "local-keynote-user";
-
-      try {
-        const upstream = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "OpenAI-Safety-Identifier": safetyIdentifier,
-          },
-          body: JSON.stringify({
-            expires_after: {
-              anchor: "created_at",
-              seconds: 600,
-            },
-            session: {
-              type: "transcription",
-              audio: {
-                input: {
-                  format: {
-                    type: "audio/pcm",
-                    rate: 24000,
-                  },
-                  transcription: {
-                    model: "gpt-realtime-whisper",
-                    language: sourceLanguage,
-                    delay,
-                  },
-                  noise_reduction: {
-                    type: "near_field",
-                  },
-                  turn_detection: null,
-                },
-              },
-            },
-          }),
-        });
-        const text = await upstream.text();
-        res.writeHead(upstream.status, { "Content-Type": "application/json;charset=utf-8" });
-        res.end(text);
-      } catch {
-        sendJson(res, 502, { error: "Unable to create a realtime transcription client secret." });
-      }
+    if (pathname === "/api/realtime/transcription-client-secret" && req.method === "POST") {
+      const params = validateTranscriptionRequest(await readJson(req), config);
+      await proxyClientSecret(res, `${OPENAI}/realtime/client_secrets`, buildTranscriptionSecretRequest(params, config));
       return;
     }
 
-    if (req.method === "GET" || req.method === "HEAD") {
-      await serveStatic(req, res);
-      return;
-    }
-
-    sendJson(res, 405, { error: "Method not allowed." });
-  } catch {
-    sendJson(res, 500, { error: "Internal server error." });
+    sendJson(res, 404, { error: "Not found." });
   }
-});
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Keynote Live Translator running at http://127.0.0.1:${port}`);
-});
+  async function proxyClientSecret(res, endpoint, payload) {
+    if (!apiKey) {
+      sendJson(res, 401, { error: "尚未設定 API key。" });
+      return;
+    }
+    try {
+      const upstream = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "OpenAI-Safety-Identifier": "local-keynote-user",
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      const text = await upstream.text();
+      res.writeHead(upstream.status, { "Content-Type": "application/json;charset=utf-8" });
+      res.end(text);
+    } catch (error) {
+      const timedOut = error?.name === "TimeoutError";
+      sendJson(res, timedOut ? 504 : 502, {
+        error: timedOut ? "OpenAI 回應逾時，請稍後再試。" : "無法連線到 OpenAI，請檢查網路。",
+      });
+    }
+  }
 
-function isLocalhost(address) {
-  return !address || address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  async function readJson(req) {
+    const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (contentType !== "application/json") {
+      throw new ValidationError("Content-Type 必須是 application/json。", 415);
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > config.limits.requestBodyMaxBytes) throw new ValidationError("Request body too large.", 413);
+      chunks.push(chunk);
+    }
+    if (size === 0) return {};
+    try {
+      const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      throw new ValidationError("JSON 格式錯誤。");
+    }
+  }
+
+  server.listen(port, host, () => {
+    actualPort = server.address().port;
+    console.log(`Keynote Live Translator ${appVersion} running at http://${host}:${actualPort}`);
+  });
+
+  return {
+    server,
+    token,
+    get port() {
+      return actualPort;
+    },
+  };
 }
 
-async function serveStatic(req, res) {
-  const parsedUrl = new URL(req.url || "/", "http://127.0.0.1");
-  const safePath = normalize(decodeURIComponent(parsedUrl.pathname)).replace(/^(\.\.[/\\])+/, "");
-  const path = safePath === "/" ? "/index.html" : safePath;
-  const filePath = join(publicDir, path);
+// Checks the key and model access once when the key is saved, so problems surface during rehearsal
+// instead of when pressing Start on stage.
+export async function verifyApiKey(key, fetchImpl = fetch) {
+  const models = [config.models.translation, config.models.transcription];
+  const warnings = [];
+  const results = await Promise.all(
+    models.map(async (model) => {
+      try {
+        const response = await fetchImpl(`${OPENAI}/models/${model}`, {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+        return { model, status: response.status };
+      } catch {
+        return { model, status: 0 };
+      }
+    }),
+  );
+  if (results.some((result) => result.status === 401)) {
+    return { rejected: "OpenAI 拒絕這把金鑰（無效或已撤銷）。", warnings };
+  }
+  for (const { model, status } of results) {
+    if (status === 0) warnings.push("暫時無法連線到 OpenAI 驗證金鑰，已先儲存。");
+    else if (status === 403 || status === 404) warnings.push(`這把金鑰目前無法使用 ${model}。`);
+    else if (status >= 400) warnings.push(`驗證 ${model} 時 OpenAI 回應 ${status}。`);
+  }
+  return { rejected: null, warnings: [...new Set(warnings)] };
+}
 
-  if (!filePath.startsWith(publicDir)) {
+export function isAllowedHost(hostHeader, port) {
+  if (typeof hostHeader !== "string") return false;
+  return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(hostHeader.toLowerCase());
+}
+
+export function isAllowedOrigin(origin, port) {
+  if (origin === undefined) return true;
+  return [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`].includes(String(origin).toLowerCase());
+}
+
+function hasValidToken(received, token) {
+  if (typeof received !== "string" || received.length !== token.length) return false;
+  return timingSafeEqual(Buffer.from(received), Buffer.from(token));
+}
+
+async function serveStatic(req, res, pathname, token) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    sendJson(res, 400, { error: "Bad request." });
+    return;
+  }
+  const relativePath = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
+  const filePath = resolve(publicDir, relativePath);
+  if (!filePath.startsWith(publicDir + sep)) {
     sendJson(res, 403, { error: "Forbidden." });
     return;
   }
 
+  let file;
   try {
-    const file = await readFile(filePath);
-    res.writeHead(200, { "Content-Type": contentTypes[extname(filePath)] || "application/octet-stream" });
-    res.end(req.method === "HEAD" ? undefined : file);
+    file = await readFile(filePath);
   } catch {
-    const fallback = await readFile(join(publicDir, "index.html"));
-    res.writeHead(200, { "Content-Type": "text/html;charset=utf-8" });
-    res.end(fallback);
+    sendJson(res, 404, { error: "Not found." });
+    return;
   }
-}
-
-async function readJson(req, limit) {
-  let data = "";
-  for await (const chunk of req) {
-    data += chunk;
-    if (data.length > limit) {
-      throw new Error("Request body too large.");
-    }
+  if (filePath.endsWith(`${sep}index.html`)) {
+    file = Buffer.from(file.toString("utf8").replace('content="__KLT_TOKEN__"', `content="${token}"`));
   }
-  return data ? JSON.parse(data) : {};
+  res.writeHead(200, {
+    "Content-Type": contentTypes[extname(filePath)] || "application/octet-stream",
+    "Content-Length": file.length,
+    "Cache-Control": "no-cache",
+  });
+  res.end(req.method === "HEAD" ? undefined : file);
 }
 
 function sendJson(res, status, body) {
-  res.writeHead(status, { "Content-Type": "application/json;charset=utf-8" });
-  res.end(JSON.stringify(body));
+  const text = JSON.stringify(body);
+  res.writeHead(status, { "Content-Type": "application/json;charset=utf-8", "Content-Length": Buffer.byteLength(text) });
+  res.end(text);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const { server } = startServer();
+  const shutdown = () => server.close(() => process.exit(0));
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }

@@ -1,70 +1,46 @@
 #!/bin/zsh
+# Builds "Keynote Live Translator.app": a universal (arm64 + x86_64) Swift binary plus the web UI.
+# No Node.js runtime is bundled; the app serves the UI itself and calls OpenAI natively.
+#
+# Signing:
+#   default                 ad-hoc signature (local testing)
+#   CODESIGN_IDENTITY=...   e.g. "Developer ID Application: Name (TEAMID)" → hardened runtime + entitlements
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT_DIR/build"
-VERSION="$(cat "$ROOT_DIR/VERSION")"
+source "$ROOT_DIR/scripts/version.sh"
 APP_NAME="Keynote Live Translator"
-VERSION_BUILD_DIR="$BUILD_DIR/v$VERSION"
-APP_DIR="$VERSION_BUILD_DIR/$APP_NAME.app"
-NODE_BIN="${NODE_BIN:-$(command -v node)}"
-SWIFT_SRC="$ROOT_DIR/src/macos/KeynoteLiveTranslator.swift"
+OUTPUT_DIR="$ROOT_DIR/build/v$APP_VERSION"
+APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
+WORK_DIR="$(mktemp -d)"
+MIN_MACOS="12.3"
 export COPYFILE_DISABLE=1
-
-if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
-  echo "Node.js executable not found. Set NODE_BIN=/path/to/node and retry." >&2
-  exit 1
-fi
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 rm -rf "$APP_DIR"
-mkdir -p "$VERSION_BUILD_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS"
-mkdir -p "$APP_DIR/Contents/Resources/node/bin"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-cp "$NODE_BIN" "$APP_DIR/Contents/Resources/node/bin/node"
-cp -R "$ROOT_DIR/server" "$APP_DIR/Contents/Resources/server"
-cp -R "$ROOT_DIR/public" "$APP_DIR/Contents/Resources/public"
-/usr/bin/swiftc "$SWIFT_SRC" -framework AppKit -framework WebKit -o "$APP_DIR/Contents/MacOS/KeynoteLiveTranslator"
+SOURCES=("$ROOT_DIR"/src/macos/*.swift)
+for ARCH in arm64 x86_64; do
+  xcrun swiftc -O -target "$ARCH-apple-macos$MIN_MACOS" "${SOURCES[@]}" \
+    -framework AppKit -framework WebKit -o "$WORK_DIR/KeynoteLiveTranslator-$ARCH"
+done
+lipo -create -output "$APP_DIR/Contents/MacOS/KeynoteLiveTranslator" \
+  "$WORK_DIR/KeynoteLiveTranslator-arm64" "$WORK_DIR/KeynoteLiveTranslator-x86_64"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>zh_TW</string>
-  <key>CFBundleDisplayName</key>
-  <string>Keynote Live Translator</string>
-  <key>CFBundleExecutable</key>
-  <string>KeynoteLiveTranslator</string>
-  <key>CFBundleIdentifier</key>
-  <string>local.keynote-live-translator</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Keynote Live Translator</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>VERSION_PLACEHOLDER</string>
-  <key>CFBundleVersion</key>
-  <string>2</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>12.0</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSMicrophoneUsageDescription</key>
-  <string>Keynote Live Translator 需要麥克風來產生即時字幕與翻譯。</string>
-</dict>
-</plist>
-PLIST
+rsync -a --exclude ".DS_Store" "$ROOT_DIR/public/" "$APP_DIR/Contents/Resources/public/"
+sed -e "s/__VERSION__/$APP_VERSION/" -e "s/__BUILD_NUMBER__/$BUILD_NUMBER/" \
+  "$ROOT_DIR/src/macos/Info.plist" > "$APP_DIR/Contents/Info.plist"
+plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
-/usr/bin/sed -i '' "s/VERSION_PLACEHOLDER/$VERSION/g" "$APP_DIR/Contents/Info.plist"
-
-chmod +x "$APP_DIR/Contents/MacOS/KeynoteLiveTranslator"
-
-/usr/bin/dot_clean -m "$APP_DIR" >/dev/null 2>&1 || true
-
-/usr/bin/codesign --force --deep --sign - "$APP_DIR" >/dev/null
+/usr/bin/xattr -cr "$APP_DIR" 2>/dev/null || true
+if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT_DIR/src/macos/KeynoteLiveTranslator.entitlements" \
+    --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+else
+  codesign --force --sign - "$APP_DIR"
+fi
+codesign --verify --strict "$APP_DIR"
 
 echo "$APP_DIR"

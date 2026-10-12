@@ -2,123 +2,61 @@
 
 ## 目標
 
-把目前本機 Web 版轉成 macOS `.app`，並用 `.pkg` 安裝到 `/Applications`。正式 keynote 使用時，使用者只需要開啟 App、貼上自己的 OpenAI API key、選擇字幕模式、按 Start。
+macOS `.app` 以 `.pkg` 安裝到 `/Applications`。使用者開啟 App、輸入自己的 OpenAI API key、選擇字幕模式、按「開始」即可使用。
 
 ## 字幕模式
 
 1. 雙語字幕
-   - 同時啟動兩條 Realtime 路徑。
-   - `gpt-realtime-whisper` 依使用者選擇的原文語言產生原文字幕。
-   - `gpt-realtime-translate` 依使用者選擇的目標語言產生翻譯字幕。
-   - 逐字稿同時記錄原文與翻譯。
+   - 翻譯：`gpt-realtime-translate`（WebRTC）。
+   - 原文：預設用 `gpt-live-transcribe`（WebSocket，可設定關鍵字與情境說明）；
+     也可在「設定 > 辨識」改用翻譯連線附帶的原文（費用約減半）。
+2. 只顯示翻譯：只連 `gpt-realtime-translate`，仍會記錄翻譯連線附帶的原文逐字稿。
+3. 只顯示原文：只連 `gpt-live-transcribe`。
 
-2. 只顯示翻譯
-   - 只啟動 `gpt-realtime-translate`。
-   - 畫面只顯示翻譯區。
-   - 翻譯目標語言目前 UI 支援繁體中文與英文，後端保留官方 13 種輸出語言白名單。
+## 架構
 
-3. 只顯示原文
-   - 只啟動 `gpt-realtime-whisper`。
-   - 畫面只顯示原文區。
-   - 原文字幕語言目前 UI 支援英文與中文。
+- `src/macos/`：Swift AppKit + WKWebView，編譯成 arm64 + x86_64 universal binary，不再內附 Node.js。
+- `StaticServer.swift`：Network.framework，只綁 `127.0.0.1`，只提供 `public/` 靜態檔，檢查 Host 標頭；
+  優先使用 8787（讓 localStorage 設定沿用），被佔用時改用隨機埠。
+- `NativeBridge.swift`：`window.webkit.messageHandlers.klt`（`WKScriptMessageHandlerWithReply`），
+  只接受本機頁面主框架的訊息；提供 API 呼叫、存檔（NSSavePanel）、全螢幕、防休眠、離開確認、字幕視窗。
+- `RealtimeBackend.swift`：金鑰保管與驗證、向 OpenAI 換短效 client secret；規則與
+  `server/realtime.mjs` 相同，由 `tests/contract.test.mjs` 比對。
+- `KeychainStore.swift`：使用者勾選「記住金鑰」時存入登入鑰匙圈。
 
-## 即時處理架構
+## 即時處理
 
-- 後端只跑在 `127.0.0.1`，不接受外部網路來源。
-- API key 只存在本機後端記憶體，不寫入檔案、不放瀏覽器 localStorage、不輸出到 log。
-- 後端用 API key 換取短效 Realtime client secret。
-- 前端直接用短效 token 連線 OpenAI Realtime。
-- Translate 走 WebRTC `/v1/realtime/translations/calls`。
-- Whisper 走 WebSocket `wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper`。
-- Realtime Translation 來源語言由模型自動偵測；使用者只需選翻譯目標語言。
-- Whisper 原文字幕使用 ISO-639-1 語言碼，目前 UI 支援 `en` 與 `zh`。
-- 麥克風音訊分流：
-  - WebRTC track 送給 Translate。
-  - 同一支麥克風 stream 轉成 24 kHz mono PCM16，送給 Whisper。
+- 麥克風 track 直接送 WebRTC（翻譯）；AudioWorklet 轉成 24 kHz PCM16 送 WebSocket（轉錄）、音量表與 VAD。
+- 每句話結束（VAD 偵測靜音）才 commit，最長 15–25 秒強制分段。
+- 斷線自動重連；55 分鐘時無縫換新連線（Realtime 單次連線上限 60 分鐘）。
+- 停止時翻譯送 `session.close` 等 `session.closed`，轉錄等最後一句 `completed`。
 
-## 繁體中文保證
+## 繁體中文
 
-- Realtime Translate 目標語言選擇中文時，前端會轉成台灣繁體中文。
-- 前端載入本機 OpenCC `cn -> twp` 轉換。
-- 額外保留常見簡中詞/字 fallback map，避免正式場合出現簡體字。
-- SRT、TXT、Markdown、JSON 匯出前會再次 normalize。
+- 原始文字保存在逐字稿裡，顯示與匯出時才整段經 OpenCC（cn → twp）轉換，避免逐字轉換造成詞語錯誤。
+- OpenCC 載入失敗時才使用內建的簡易對照表（不含 里/后/云 等需要依上下文判斷的字）。
 
 ## UI/UX
 
-- 首屏就是字幕工作台，不做行銷首頁。
-- 上方只保留必要控制：
-  - 金鑰
-  - Start
-  - Stop
-  - Record
-  - 字幕模式
-  - 原文語言
-  - 翻譯語言
-  - Export
-  - Fullscreen
-- 其他控制收在「進階設定」：
-  - 麥克風選擇
-  - EN/ZH 字體大小
-  - Pause Display
-  - Audio
-  - 測試麥克風
-  - Mark Paragraph
-  - Clear Captions
-  - Clear Transcript
-  - 清除金鑰
-- 雙語模式上下可拖曳比例。
-- 只顯示原文 / 只顯示翻譯模式自動改成單一大字幕區。
-- 字幕區會自動捲到最新文字。
-- Transcript 側欄永遠保留，可展開檢查逐字稿。
+- 頂端：狀態（燈號、計時、句數、兩條連線狀態、音量表）、開始/停止、模式、原文、翻譯、記錄逐字稿、匯出、投影模式、逐字稿、設定、金鑰。
+- 設定抽屜：收音（麥克風、測試、音訊處理、收音距離）、辨識（雙語原文來源、轉錄延遲、關鍵字、情境說明）、
+  顯示（字級、播放翻譯語音、投影背景、對齊、暫停顯示、字幕視窗）、逐字稿與匯出、清除、快捷鍵。
+- 投影模式隱藏所有控制；字幕視窗可放到第二螢幕。
 
-## macOS App/pkg 打包方案
+## macOS 整合
 
-目前實作：Swift AppKit + WKWebView 真正 macOS 視窗 + 內嵌本機 server。App 不再自動開外部瀏覽器。
+- 主選單（編輯選單讓 ⌘C/⌘V/⌘A 可用）、視窗位置記憶、深色啟動背景。
+- 直播中防止螢幕休眠與 App Nap；有未匯出的逐字稿或直播中時，關窗/結束前確認。
+- 麥克風權限只授予本機頁面；外部連結交給預設瀏覽器。
 
-1. `.app` 結構
-   - `Contents/MacOS/KeynoteLiveTranslator`：Swift/AppKit executable。
-   - `Contents/Resources/server`：目前 Node server。
-   - `Contents/Resources/public`：目前前端檔案。
-   - `Contents/Resources/node`：固定版本 Node runtime。
-   - `Contents/Info.plist`：麥克風權限描述、App 名稱、版本資訊。
+## 打包
 
-2. 啟動流程
-   - Launcher 使用 `127.0.0.1:8787`。
-   - 若該位址已有本 app server 回應，直接載入字幕 UI。
-   - 啟動內嵌 Node server。
-   - 在 App 自己的 WKWebView 視窗載入本機 URL。
-   - App 關閉時停止 Node server。
+- `npm run build:app`：universal app，ad-hoc 簽章；設定 `CODESIGN_IDENTITY` 時改用 Developer ID + hardened runtime。
+- `npm run build:pkg`：BundleIsRelocatable = NO，一定安裝到 `/Applications`；
+  可用 `INSTALLER_IDENTITY` 簽 pkg、`NOTARY_PROFILE` 或 App Store Connect API key 公證。
 
-3. 麥克風權限
-   - macOS App 本身宣告 `NSMicrophoneUsageDescription`。
-   - WKWebView delegate 會允許本機頁面的 media capture request。
-   - 使用者仍需在 macOS「隱私權與安全性 > 麥克風」允許 Keynote Live Translator。
-   - 正式 keynote 建議保留「測試麥克風」按鈕，開場前確認權限。
+## 測試
 
-4. `.pkg`
-   - 用 `pkgbuild` 將 `.app` 安裝到 `/Applications`。
-   - 若要分發給其他電腦，需後續 Developer ID 簽章與 notarization。
-
-## 測試標準
-
-- 前端語法檢查：`node --check public/app.js`。
-- 後端語法檢查：`node --check server/index.mjs`。
-- UI 模式測試：
-  - 雙語模式顯示 EN/ZH 兩區與 splitter。
-  - 只顯示翻譯模式只顯示翻譯區。
-  - 只顯示原文模式只顯示原文區。
-- 事件測試：
-  - Whisper delta 會更新原文字幕。
-  - Translate delta 會更新翻譯字幕。
-  - 簡中輸入會轉成繁中。
-- App 測試：
-  - Swift executable 可成功編譯成 Mach-O。
-  - `.app` codesign verify 通過。
-  - `.pkg` 可成功產出。
-- 權限測試：
-  - App/pkg 版需單獨測 macOS 麥克風權限。
-- 真實 API 測試：
-  - 雙語模式確認兩條 Realtime 連線同時啟動。
-  - 純繁中模式確認只建立 Translate token。
-  - 純英文模式確認只建立 Whisper token。
-  - SRT 匯出時間軸與字幕內容正確。
+- `npm test`：單元測試、server 安全性、連線控制器、Swift ↔ Node 合約測試。
+- `npm run test:macos`：在不顯示的 WKWebView 中載入真正的 UI，驗證原生橋接與靜態 server。
+- 真實 API 測試仍需人工：雙語、只翻譯、只原文三種模式各跑一次，確認字幕、停止收尾與 SRT 匯出。

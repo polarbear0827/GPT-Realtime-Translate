@@ -1,11 +1,16 @@
 {
   "name": "keynote-live-translator",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node server/index.mjs",
-    "check": "node --check server/index.mjs && node --check public/app.js",
+    "check": "for f in server/*.mjs public/js/*.js; do node --check \"$f\" || exit 1; done",
+    "test": "node --test tests/*.test.mjs",
+    "test:macos": "zsh scripts/test-macos.sh",
     "build:app": "zsh scripts/build-app.sh",
     "build:pkg": "zsh scripts/build-pkg.sh",
     "build:android": "zsh scripts/build-android.sh"
