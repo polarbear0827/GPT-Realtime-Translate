@@ -16,6 +16,8 @@
   <img src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555" alt="Universal" />
 </p>
 
+<p align="center"><strong>繁體中文</strong> ｜ <a href="README.en.md">English</a></p>
+
 <p align="center">
   <img src="docs/images/hero.png" alt="Keynote Live Translator 主視窗與觀眾手機畫面" />
 </p>
