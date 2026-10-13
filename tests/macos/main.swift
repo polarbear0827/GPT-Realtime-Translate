@@ -152,6 +152,9 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
           badKeywords: await call({ action: "request", method: "POST", path: "/api/realtime/transcription-client-secret", body: { keywords: ["x".repeat(61)] } }),
           noKey: await call({ action: "request", method: "POST", path: "/api/realtime/translation-client-secret", body: { targetLanguage: "zh" } }),
           badKey: await call({ action: "request", method: "POST", path: "/api/key", body: { apiKey: "nope" } }),
+          segmentNoKey: await call({ action: "request", method: "POST", path: "/api/segment", body: { language: "zh", text: "儘管前期人頭一直往下掉所以" } }),
+          segmentEmpty: await call({ action: "request", method: "POST", path: "/api/segment", body: { language: "zh", text: "  " } }),
+          smartBreaksDefault: document.getElementById("smartBreaksToggle").checked,
           save: await call({ action: "saveFile", filename: "a.srt", mimeType: "text/plain", content: "1\\n00:00:00,000 --> 00:00:01,000\\n測試" }),
           startButton: document.getElementById("startStopBtn").textContent,
           keyDialogOpen: document.getElementById("keyDialog").open,
@@ -169,6 +172,9 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             check("over-long keyword → 400", (result["badKeywords"] as? [String: Any])?["status"] as? Int == 400)
             check("client secret without key → 401", (result["noKey"] as? [String: Any])?["status"] as? Int == 401)
             check("malformed key → 400", (result["badKey"] as? [String: Any])?["status"] as? Int == 400)
+            check("smart line breaks without key → 401", (result["segmentNoKey"] as? [String: Any])?["status"] as? Int == 401)
+            check("smart line breaks with no text → 400", (result["segmentEmpty"] as? [String: Any])?["status"] as? Int == 400)
+            check("smart line breaks on by default", result["smartBreaksDefault"] as? Bool == true)
             check("saveFile round trip", (result["save"] as? [String: Any])?["saved"] as? Bool == true && savedContent.contains("測試"))
             check("UI rendered in Chinese", result["startButton"] as? String == "開始")
             check("key dialog opens when no key is stored", result["keyDialogOpen"] as? Bool == true)

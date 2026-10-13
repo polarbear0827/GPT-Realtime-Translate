@@ -4,17 +4,21 @@
 import { platform } from "./platform.js";
 
 const REQUEST_TIMEOUT_MS = 25_000;
+// A line break that arrives later than this is no longer useful on screen.
+const SEGMENT_TIMEOUT_MS = 8_000;
 
-async function call(method, path, body) {
+async function call(method, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("本機服務沒有回應，請稍後再試。")), REQUEST_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new Error("本機服務沒有回應，請稍後再試。")), timeoutMs);
   });
   try {
     const result = await Promise.race([platform.request(method, path, body), timeout]);
     const data = result?.data ?? {};
     if (!result || result.status < 200 || result.status >= 300) {
-      throw new Error(errorMessage(data) || `請求失敗（${result?.status ?? "?"}）。`);
+      const error = new Error(errorMessage(data) || `請求失敗（${result?.status ?? "?"}）。`);
+      error.status = result?.status ?? 0;
+      throw error;
     }
     return data;
   } finally {
@@ -45,6 +49,12 @@ export async function createTranscriptionSecret({ sourceLanguage, delay, prompt,
   return extractToken(
     await call("POST", "/api/realtime/transcription-client-secret", { sourceLanguage, delay, prompt, keywords, noiseReduction }),
   );
+}
+
+// Semantic line breaks: the model's lines for the open phrase of a caption stream (see segmenter.js).
+export async function segmentText({ text, language, context }) {
+  const data = await call("POST", "/api/segment", { text, language, context }, SEGMENT_TIMEOUT_MS);
+  return Array.isArray(data.lines) ? data.lines.filter((line) => typeof line === "string") : [];
 }
 
 // Audience sharing (relay settings live in the backend, like the API key).

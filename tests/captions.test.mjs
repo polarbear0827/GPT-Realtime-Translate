@@ -36,3 +36,11 @@ test("cleared lines stay hidden; new phrases appear", () => {
   store.appendStream("translation", { track: "translation", language: "zh", delta: "新的一句", atMs: 5000, cjk: true });
   assert.deepEqual(captionLines(store, "translation", { from, display }), ["新的一句"]);
 });
+
+test("a line break replaces a trailing comma; Chinese gets full-width punctuation", async () => {
+  const { displayText } = await import("../public/js/zh.js");
+  const store = new TranscriptStore();
+  store.appendStream("translation", { track: "translation", language: "zh", delta: "這局裡有很多工具,能直接秒掉Quad,", atMs: 0, cjk: true, assisted: true });
+  store.breakStream("translation", ["這局裡有很多工具,"]);
+  assert.deepEqual(captionLines(store, "translation", { display: displayText }), ["這局裡有很多工具", "能直接秒掉Quad"]);
+});

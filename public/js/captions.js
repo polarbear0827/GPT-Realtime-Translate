@@ -2,7 +2,7 @@
 // its own line, split further at sentence ends; the newest line is at the bottom and older lines fade.
 // Chinese is converted per phrase at render time, never per streaming delta.
 
-import { splitSentences } from "./text.js";
+import { captionText, splitSentences } from "./text.js";
 import { displayText, zhConverterVersion } from "./zh.js";
 
 export const CAPTION_LINES = 12;
@@ -28,7 +28,7 @@ export function captionLines(store, track, { from = 0, limit = CAPTION_LINES, di
     if (entry.track !== track) continue;
     const text = displayed(entry, display);
     if (!text) continue;
-    const sentences = splitSentences(text);
+    const sentences = splitSentences(text).map(captionText).filter(Boolean);
     for (let sentence = sentences.length - 1; sentence >= 0 && lines.length < limit; sentence -= 1) lines.push(sentences[sentence]);
   }
   return lines.reverse();

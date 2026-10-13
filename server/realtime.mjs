@@ -105,6 +105,42 @@ export function buildTranscriptionSecretRequest({ sourceLanguage, delay, prompt,
   };
 }
 
+// Semantic line breaks: the open phrase of a live caption stream, and optionally the line before it.
+export function validateSegmentRequest(body, config) {
+  const language = stringOr(body?.language, "");
+  if (!config.transcriptionLanguages.includes(language) && !config.translationOutputLanguages.includes(language)) {
+    throw new ValidationError("不支援的語言。");
+  }
+  const text = stringOr(body?.text, "").trim();
+  if (!text) throw new ValidationError("沒有要斷句的文字。");
+  if (text.length > config.segmentation.textMaxChars) throw new ValidationError("要斷句的文字太長。");
+  const context = stringOr(body?.context, "").trim();
+  if (context.length > config.segmentation.contextMaxChars) throw new ValidationError("前文太長。");
+  return { language, text, context };
+}
+
+export function buildSegmentRequest({ text, context }, config) {
+  return {
+    model: config.models.segmentation,
+    temperature: 0,
+    max_completion_tokens: config.segmentation.maxOutputTokens,
+    messages: [
+      { role: "system", content: config.segmentation.instructions },
+      { role: "user", content: context ? `Previous line:\n${context}\n\nText:\n${text}` : `Text:\n${text}` },
+    ],
+  };
+}
+
+// The model's lines (Chat Completions response). Mapping them back onto the text is the client's job.
+export function parseSegmentResponse(data) {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") throw new ValidationError("OpenAI 回應格式錯誤。", 502);
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function validateNoiseReduction(value, config) {
   const type = stringOr(value, config.defaults.noiseReduction);
   if (!config.noiseReductionTypes.includes(type)) {

@@ -6,6 +6,7 @@ import { startServer } from "../server/index.mjs";
 // OpenAI is stubbed: the server calls the global fetch, the tests talk to the server with node:http.
 const upstreamCalls = [];
 let modelStatus = 200;
+let segmentReply = { status: 200, body: { choices: [{ message: { content: "儘管前期人頭一直往下掉\n所以他的大樹" } }] } };
 const RELAY_KEY = "kltp_test_0123456789abcdefghijklmnopqrstuvwxyz";
 let relaySocketUrl = "wss://relay.test/api/rooms/abcdefghjkmn/host";
 globalThis.fetch = async (url, init = {}) => {
@@ -17,6 +18,7 @@ globalThis.fetch = async (url, init = {}) => {
     return Response.json({ room: "abcdefghjkmn", hostToken: "host-token", viewerUrl: "https://relay.test/r/abcdefghjkmn", socketUrl: relaySocketUrl });
   }
   if (String(url).includes("/models/")) return new Response("{}", { status: modelStatus });
+  if (String(url).endsWith("/chat/completions")) return Response.json(segmentReply.body, { status: segmentReply.status });
   return new Response(JSON.stringify({ value: "ek_test_secret" }), { status: 200, headers: { "Content-Type": "application/json" } });
 };
 
@@ -103,6 +105,7 @@ test("key is verified with OpenAI before it is accepted", async () => {
   const warned = await call({ method: "POST", path: "/api/key", auth: true, headers: json, body: { apiKey: "sk-test-0000000000000000000000" } });
   assert.equal(warned.status, 200);
   assert.ok(warned.json.warnings.some((warning) => warning.includes("gpt-live-transcribe")));
+  assert.ok(warned.json.warnings.some((warning) => warning.includes("gpt-4.1-mini") && warning.includes("智慧斷句")));
   modelStatus = 200;
 });
 
@@ -143,10 +146,34 @@ test("translation client secret and validation", async () => {
   assert.equal((await call({ method: "POST", path: "/api/realtime/transcription-client-secret", auth: true, headers: json, body: { delay: "fast" } })).status, 400);
 });
 
+test("smart line breaks: the open phrase goes to the text model, its lines come back", async () => {
+  const body = { language: "zh", text: "儘管前期人頭一直往下掉所以他的大樹", context: "有經濟差" };
+  const response = await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json.lines, ["儘管前期人頭一直往下掉", "所以他的大樹"]);
+  const upstream = upstreamCalls.at(-1);
+  assert.equal(upstream.url, "https://api.openai.com/v1/chat/completions");
+  assert.equal(upstream.body.model, "gpt-4.1-mini");
+  assert.equal(upstream.body.temperature, 0);
+  assert.match(upstream.body.messages[0].content, /never|exactly/i);
+  assert.equal(upstream.body.messages[1].content, "Previous line:\n有經濟差\n\nText:\n儘管前期人頭一直往下掉所以他的大樹");
+
+  segmentReply = { status: 404, body: { error: { message: "The model `gpt-4.1-mini` does not exist" } } };
+  const missing = await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body });
+  assert.equal(missing.status, 404);
+  assert.match(missing.json.error, /does not exist/);
+  segmentReply = { status: 200, body: { choices: [] } };
+  assert.equal((await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body })).status, 502);
+
+  const invalid = await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body: { language: "zh", text: "  " } });
+  assert.equal(invalid.status, 400);
+});
+
 test("deleting the key", async () => {
   assert.equal((await call({ method: "DELETE", path: "/api/key", auth: true })).status, 200);
   assert.equal((await call({ path: "/api/health", auth: true })).json.hasApiKey, false);
   assert.equal((await call({ method: "POST", path: "/api/realtime/translation-client-secret", auth: true, headers: json, body: {} })).status, 401);
+  assert.equal((await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body: { language: "zh", text: "你好" } })).status, 401);
 });
 
 test("sharing: the relay is verified before it's saved, and the page may then connect to it", async () => {

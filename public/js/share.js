@@ -8,6 +8,9 @@
 
 // One relay room fans every update out to every viewer; measured on Cloudflare, about 2,000 viewer
 // messages per second stays fast and 4,000 starts to queue. Larger audiences get fewer, larger updates.
+
+import { captionText } from "./text.js";
+
 export function flushInterval(viewers) {
   if (viewers > 1500) return 1000;
   if (viewers > 400) return 500;
@@ -342,6 +345,13 @@ export class SharePublisher {
     return kind === "s" && this.meta?.primary === "t" && Boolean(this.meta?.original);
   }
 
+  // Lines are shown one per phrase, like the live captions; the original strip joins phrases.
+  lineText(entry) {
+    const text = this.display(entry.text, entry.language).trim();
+    const kind = entry.track === "translation" ? "t" : "s";
+    return kind === this.meta?.primary ? captionText(text) : text;
+  }
+
   flush() {
     this.clearTimeout(this.flushTimer);
     this.flushTimer = null;
@@ -351,7 +361,7 @@ export class SharePublisher {
     for (const id of this.dirty) {
       const entry = this.feed.byId.get(id);
       const sent = this.published.get(id);
-      const text = entry && this.wants(entry) ? this.display(entry.text, entry.language).trim() : "";
+      const text = entry && this.wants(entry) ? this.lineText(entry) : "";
       if (!text) {
         if (sent) {
           ops.push({ i: this.prefix + id, d: 1 });

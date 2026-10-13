@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chunkText, formatClock, formatSrtTime, joinText, lastSentenceBoundary, splitSentences, tailText, wrapLines } from "../public/js/text.js";
+import { captionText, chunkText, formatClock, formatSrtTime, fullwidthPunctuation, joinText, lastSentenceBoundary, splitSentences, tailText, wrapLines } from "../public/js/text.js";
 
 test("sentence boundary is only confirmed once more text follows", () => {
   assert.equal(lastSentenceBoundary("It costs 3."), -1);
@@ -42,4 +42,13 @@ test("time formatting", () => {
   assert.equal(formatClock(65_000), "01:05");
   assert.equal(formatClock(3_725_000), "1:02:05");
   assert.equal(formatSrtTime(3_725_123), "01:02:05,123");
+});
+
+test("half-width punctuation next to Chinese becomes full-width; numbers and English are left alone", () => {
+  assert.equal(fullwidthPunctuation("這局裡有很多工具,能直接秒掉Quad, 這就是其中之一?"), "這局裡有很多工具，能直接秒掉Quad，這就是其中之一？");
+  assert.equal(fullwidthPunctuation("成長到3,000人,時間是3:00"), "成長到3,000人，時間是3:00");
+  assert.equal(fullwidthPunctuation("Hello, world! It's 3:00."), "Hello, world! It's 3:00.");
+  assert.equal(captionText("這就是其中之一，"), "這就是其中之一");
+  assert.equal(captionText("真的嗎？"), "真的嗎？");
+  assert.equal(captionText("If he comes online,"), "If he comes online,");
 });

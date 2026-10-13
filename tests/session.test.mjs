@@ -356,3 +356,38 @@ test("the sharing feed gets every sentence, even when the transcript isn't recor
   await controller.stop();
   assert.ok(feed.entries.every((entry) => entry.final), "stopping seals the feed too");
 });
+
+test("smart breaks: the model's phrase breaks reach both the transcript and the live feed", async () => {
+  const feed = new TranscriptStore();
+  const requests = [];
+  const { controller, store } = setup({}, { feed });
+  controller.api.segmentText = async (body) => {
+    requests.push(body);
+    return body.text.split(/(?=所以)/);
+  };
+  await controller.start(options("translation"));
+  translates[0].onEvent({ type: "output-delta", delta: "儘管前期人頭一直往下掉" });
+  translates[0].onEvent({ type: "output-delta", delta: "所以他的大樹" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  for (const target of [store, feed]) {
+    assert.deepEqual(target.track("translation").map((entry) => entry.text), ["儘管前期人頭一直往下掉", "所以他的大樹"]);
+  }
+  assert.equal(requests[0].language, "zh");
+  await controller.stop();
+});
+
+test("smart breaks can be turned off", async () => {
+  const requests = [];
+  const { controller } = setup();
+  controller.api.segmentText = async (body) => requests.push(body);
+  await controller.start(options("translation", { smartBreaks: false }));
+  translates[0].onEvent({ type: "output-delta", delta: "儘管前期人頭一直往下掉所以他的大樹" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 0);
+  controller.setSmartBreaks(true);
+  translates[0].onEvent({ type: "output-delta", delta: "又快上線了" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  await controller.stop();
+});

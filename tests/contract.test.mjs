@@ -9,8 +9,11 @@ import { test } from "node:test";
 import {
   ValidationError,
   buildTranscriptionSecretRequest,
+  buildSegmentRequest,
   buildTranslationSecretRequest,
+  parseSegmentResponse,
   validateApiKeyFormat,
+  validateSegmentRequest,
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "../server/realtime.mjs";
@@ -59,6 +62,16 @@ const fixtures = [
   { kind: "roomTitle", value: "  2026 AI\t開發者\n\n大會  " },
   { kind: "roomTitle", value: "講".repeat(90) },
   { kind: "roomTitle", value: null },
+  { kind: "segment", body: { language: "zh", text: "  所以他的大樹又快上線了再看男槍  ", context: "儘管前期人頭一直往下掉" } },
+  { kind: "segment", body: { language: "en", text: "If he starts to come online this could get difficult" } },
+  { kind: "segment", body: { language: "zh", text: "   " } },
+  { kind: "segment", body: { language: "xx", text: "hello" } },
+  { kind: "segment", body: { language: "zh", text: "字".repeat(401) } },
+  { kind: "segment", body: { language: "zh", text: "字".repeat(400), context: "前".repeat(201) } },
+  { kind: "segment", body: { language: "ja", text: "こんにちは", context: 42 } },
+  { kind: "segmentResponse", value: { choices: [{ message: { content: " 所以他的大樹又快上線了 \r\n\n再看男槍\n" } }] } },
+  { kind: "segmentResponse", value: { choices: [] } },
+  { kind: "segmentResponse", value: { error: { message: "nope" } } },
   { kind: "csp", value: null },
   { kind: "csp", value: "https://klt-relay.example.workers.dev" },
   { kind: "csp", value: "http://127.0.0.1:8788" },
@@ -72,6 +85,8 @@ function nodeResult(fixture) {
     if (fixture.kind === "publishKey") return { ok: validatePublishKey(fixture.value) };
     if (fixture.kind === "roomTitle") return { ok: normalizeRoomTitle(fixture.value) };
     if (fixture.kind === "csp") return { ok: contentSecurityPolicy(fixture.value) };
+    if (fixture.kind === "segment") return { ok: buildSegmentRequest(validateSegmentRequest(fixture.body, config), config) };
+    if (fixture.kind === "segmentResponse") return { ok: parseSegmentResponse(fixture.value) };
     return { ok: validateApiKeyFormat(fixture.value) };
   } catch (error) {
     if (error instanceof ValidationError) return { error: { status: error.status, message: error.message } };

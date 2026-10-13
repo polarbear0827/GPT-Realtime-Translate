@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS = {
   recording: true,
   autoBackup: true,
   playAudio: false,
+  smartBreaks: true,
   theme: "system",
   displayBackground: "theme",
   displayAlign: "left",

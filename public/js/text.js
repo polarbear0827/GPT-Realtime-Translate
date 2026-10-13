@@ -33,6 +33,27 @@ export function tailText(text, maxChars, cjk) {
   return space >= 0 && space < 40 ? tail.slice(space + 1) : tail;
 }
 
+// Half-width punctuation next to Chinese text, or ending it ("工具,能" from the translation model) →
+// full-width.
+// Numbers such as 3,000 and 3:00 are left alone.
+export function fullwidthPunctuation(text) {
+  return text.replace(/\s*([,;:?!])\s*/g, (match, mark, offset) => {
+    const before = text[offset - 1] ?? "";
+    const after = text[offset + match.length] ?? "";
+    if (/[0-9]/.test(before) && /[0-9]/.test(after)) return match;
+    if (!HAN.test(before) && !HAN.test(after) && !(after === "" && HAN.test(text))) return match;
+    return FULLWIDTH[mark];
+  });
+}
+
+const HAN = /\p{Script=Han}/u;
+const FULLWIDTH = { ",": "，", ";": "；", ":": "：", "?": "？", "!": "！" };
+
+// A caption line: the line break replaces a trailing comma.
+export function captionText(text) {
+  return text.trim().replace(/[，、；：\s]+$/u, "");
+}
+
 export function splitSentences(text) {
   const sentences = [];
   let start = 0;

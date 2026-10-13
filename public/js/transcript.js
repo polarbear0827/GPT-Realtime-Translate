@@ -1,17 +1,24 @@
 // Transcript store. Source and translation are kept as independent tracks of timed entries:
 // - transcription items (one per committed speech turn) are keyed by the API item_id
-// - streamed text (translation output, translate input transcript) is split into phrases here: at
-//   sentence ends, when the speech pauses (the translation often has no punctuation), and at a clause
-//   when a phrase runs long. Each entry is one caption line.
+// - streamed text (translation output, translate input transcript) is split into phrases: by meaning,
+//   by a language model (segmenter.js → breakStream), and here at sentence ends and when the speech
+//   pauses (the translation often has no punctuation). Without the model, phrases are also cut at
+//   clause marks and, when they run long, at the most natural word boundary. Each entry is one line.
 // Exporters align the two tracks by time, so a lagging translation never shifts the source text.
 // Text is stored as received (possibly Simplified Chinese); conversion happens at display/export time.
 
+import { clauseBreak, ruleBreak } from "./phrases.js";
 import { lastSentenceBoundary } from "./text.js";
 
-const STREAM_MAX_CHARS = { cjk: 36, other: 140 };
 // A gap this long between deltas ends the phrase, once it has a few words.
 const PAUSE_SPLIT_MS = 900;
 const PAUSE_MIN_CHARS = { cjk: 6, other: 16 };
+// Without the language model: a clause mark ends a phrase this long, and longer phrases are cut.
+const CLAUSE_MIN_CHARS = { cjk: 6, other: 20 };
+const RULE_MAX_CHARS = { cjk: 24, other: 84 };
+// With it, only a phrase it hasn't answered about in time gets this long.
+const ASSISTED_MAX_CHARS = { cjk: 40, other: 140 };
+const RULE_MIN_CHARS = { cjk: 4, other: 12 };
 
 export class TranscriptStore {
   constructor() {
@@ -24,6 +31,8 @@ export class TranscriptStore {
     this.byId = new Map();
     this.byItem = new Map();
     this.streams = new Map();
+    // Arrival times of the open phrases' text: [{ end, at }], `end` = text length after each delta.
+    this.marks = new Map();
     this.epochPerf = null;
     this.epochWall = null;
     this.nextId = 1;
@@ -114,8 +123,8 @@ export class TranscriptStore {
   }
 
   // Streamed text: deltas are appended verbatim (repeated characters such as 謝謝 are kept) and the
-  // stream is cut into sentence entries at confirmed sentence boundaries.
-  appendStream(streamKey, { track, language, delta, atMs, cjk }) {
+  // stream is cut into phrase entries. `assisted`: the language model is choosing phrase breaks.
+  appendStream(streamKey, { track, language, delta, atMs, cjk, assisted = false }) {
     if (!delta) return;
     let entry = this.openStream(streamKey);
     const minChars = cjk ? PAUSE_MIN_CHARS.cjk : PAUSE_MIN_CHARS.other;
@@ -126,36 +135,52 @@ export class TranscriptStore {
     if (!entry) {
       entry = this.create({ track, language, startMs: atMs, endMs: atMs, text: "" });
       this.streams.set(streamKey, entry);
+      this.marks.set(streamKey, []);
     }
-    const previousLength = entry.text.length;
-    const previousEnd = entry.endMs;
     entry.text += delta;
     entry.endMs = Math.max(entry.endMs, atMs);
+    this.marks.get(streamKey).push({ end: entry.text.length, at: atMs });
 
     const boundary = lastSentenceBoundary(entry.text);
-    const maxChars = cjk ? STREAM_MAX_CHARS.cjk : STREAM_MAX_CHARS.other;
-    if (boundary > 0) {
-      // A sentence end is only confirmed by the next delta; the sentence itself ended when its
-      // terminator arrived, not when the following sentence started.
-      this.splitStream(streamKey, entry, boundary, atMs, boundary <= previousLength ? previousEnd : atMs);
-    } else if (entry.text.length > maxChars) {
-      this.splitStream(streamKey, entry, softBreak(entry.text, maxChars, cjk), atMs, atMs);
-    } else {
-      this.emit({ type: "update", entry });
+    const cut = boundary > 0 ? boundary : phraseBreak(entry.text, { cjk, language, assisted });
+    if (cut > 0) this.splitStream(streamKey, entry, cut);
+    else this.emit({ type: "update", entry });
+  }
+
+  // Cuts the open phrase of a stream after each of `heads`, the finished phrases at its start (as
+  // chosen by the language model). Stops at a head that no longer matches: the phrase was cut since.
+  breakStream(streamKey, heads) {
+    for (const head of heads) {
+      const entry = this.streams.get(streamKey);
+      if (!entry || !head) return;
+      const lead = entry.text.length - entry.text.trimStart().length;
+      if (!entry.text.startsWith(head, lead)) return;
+      const cut = lead + head.length;
+      if (!entry.text.slice(cut).trim()) return;
+      this.splitStream(streamKey, entry, cut);
     }
   }
 
-  splitStream(streamKey, entry, index, atMs, headEndMs) {
-    const rest = entry.text.slice(index).trimStart();
+  // The head keeps the entry and ends when its last character arrived; the rest starts a new entry
+  // from when its first character arrived.
+  splitStream(streamKey, entry, index) {
+    const marks = this.marks.get(streamKey) ?? [];
+    const tail = entry.text.slice(index);
+    const rest = tail.trimStart();
+    const restIndex = index + tail.length - rest.length;
     entry.text = entry.text.slice(0, index).trim();
-    entry.endMs = Math.max(entry.startMs, headEndMs);
+    entry.endMs = Math.max(entry.startMs, arrival(marks, index - 1) ?? entry.endMs);
     entry.final = true;
     this.emit({ type: "update", entry });
     if (rest) {
-      const next = this.create({ track: entry.track, language: entry.language, startMs: atMs, endMs: atMs, text: rest });
+      const restMarks = marks.filter((mark) => mark.end > restIndex).map((mark) => ({ end: mark.end - restIndex, at: mark.at }));
+      const startMs = restMarks[0]?.at ?? entry.endMs;
+      const next = this.create({ track: entry.track, language: entry.language, startMs, endMs: restMarks.at(-1)?.at ?? startMs, text: rest });
       this.streams.set(streamKey, next);
+      this.marks.set(streamKey, restMarks);
     } else {
       this.streams.delete(streamKey);
+      this.marks.delete(streamKey);
     }
   }
 
@@ -168,6 +193,7 @@ export class TranscriptStore {
     const entry = this.streams.get(streamKey);
     if (!entry) return;
     this.streams.delete(streamKey);
+    this.marks.delete(streamKey);
     entry.text = entry.text.trim();
     entry.final = true;
     if (!entry.text) this.remove(entry);
@@ -238,14 +264,19 @@ export class TranscriptStore {
   }
 }
 
-// Where to cut a phrase that ran past `maxChars`: after the last clause mark, or (in space-separated
-// languages) the last space, if that keeps at least a third of it; otherwise at the end.
-function softBreak(text, maxChars, cjk) {
-  const marks = ["，", "、", "；", "：", ", ", "; "].map((mark) => {
-    const index = text.lastIndexOf(mark);
-    return index < 0 ? -1 : index + mark.trimEnd().length;
-  });
-  if (!cjk) marks.push(text.lastIndexOf(" "));
-  const cut = Math.max(...marks);
-  return cut > maxChars / 3 ? cut : text.length;
+// Where a phrase ends without the language model's help (-1: not yet). With it, only a phrase it
+// hasn't answered about in time is cut.
+function phraseBreak(text, { cjk, language, assisted }) {
+  const kind = cjk ? "cjk" : "other";
+  if (!assisted) {
+    const clause = clauseBreak(text, CLAUSE_MIN_CHARS[kind]);
+    if (clause > 0) return clause;
+  }
+  if (text.trim().length <= (assisted ? ASSISTED_MAX_CHARS : RULE_MAX_CHARS)[kind]) return -1;
+  return ruleBreak(text, { language, minChars: RULE_MIN_CHARS[kind] });
+}
+
+// When the character at `index` arrived.
+function arrival(marks, index) {
+  return marks.find((mark) => mark.end > index)?.at ?? marks.at(-1)?.at;
 }

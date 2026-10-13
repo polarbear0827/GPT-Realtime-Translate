@@ -8,6 +8,14 @@ struct RealtimeConfig: Decodable {
     struct Models: Decodable {
         let translation: String
         let transcription: String
+        let segmentation: String
+    }
+
+    struct Segmentation: Decodable {
+        let instructions: String
+        let textMaxChars: Int
+        let contextMaxChars: Int
+        let maxOutputTokens: Int
     }
 
     struct Defaults: Decodable {
@@ -31,6 +39,7 @@ struct RealtimeConfig: Decodable {
     let noiseReductionTypes: [String]
     let defaults: Defaults
     let clientSecretTtlSeconds: Int
+    let segmentation: Segmentation
     let limits: Limits
 
     static func load(from url: URL) throws -> RealtimeConfig {
@@ -49,6 +58,12 @@ struct TranscriptionParams {
     let prompt: String
     let keywords: [String]
     let noiseReduction: String
+}
+
+struct SegmentParams {
+    let language: String
+    let text: String
+    let context: String
 }
 
 struct RealtimeRules {
@@ -155,6 +170,45 @@ struct RealtimeRules {
                 ],
             ],
         ]
+    }
+
+    // Same as validateSegmentRequest() / buildSegmentRequest() / parseSegmentResponse() in server/realtime.mjs.
+    func validateSegment(_ body: [String: Any]) throws -> SegmentParams {
+        let language = stringOr(body["language"], "")
+        guard config.transcriptionLanguages.contains(language) || config.translationOutputLanguages.contains(language) else {
+            throw BackendError(status: 400, message: "不支援的語言。")
+        }
+        let text = stringOr(body["text"], "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { throw BackendError(status: 400, message: "沒有要斷句的文字。") }
+        if text.utf16.count > config.segmentation.textMaxChars { throw BackendError(status: 400, message: "要斷句的文字太長。") }
+        let context = stringOr(body["context"], "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if context.utf16.count > config.segmentation.contextMaxChars { throw BackendError(status: 400, message: "前文太長。") }
+        return SegmentParams(language: language, text: text, context: context)
+    }
+
+    func segmentRequest(_ params: SegmentParams) -> [String: Any] {
+        let content = params.context.isEmpty ? "Text:\n\(params.text)" : "Previous line:\n\(params.context)\n\nText:\n\(params.text)"
+        return [
+            "model": config.models.segmentation,
+            "temperature": 0,
+            "max_completion_tokens": config.segmentation.maxOutputTokens,
+            "messages": [
+                ["role": "system", "content": config.segmentation.instructions],
+                ["role": "user", "content": content],
+            ],
+        ]
+    }
+
+    static func parseSegmentResponse(_ json: Any?) throws -> [String] {
+        guard let choices = (json as? [String: Any])?["choices"] as? [[String: Any]],
+              let content = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
+            throw BackendError(status: 502, message: "OpenAI 回應格式錯誤。")
+        }
+        return content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     private func validateNoiseReduction(_ value: Any?) throws -> String {
@@ -345,6 +399,9 @@ final class RealtimeBackend {
                     endpoint: "https://api.openai.com/v1/realtime/client_secrets",
                     payload: rules.transcriptionSecretRequest(params)
                 )
+            case ("POST", "/api/segment"):
+                let params = try rules.validateSegment(body)
+                return try await segment(params)
             default:
                 return (404, ["error": "Not found."])
             }
@@ -388,6 +445,34 @@ final class RealtimeBackend {
         }
     }
 
+    // Same as segment() in server/index.mjs.
+    private func segment(_ params: SegmentParams) async throws -> (Int, Any) {
+        guard let apiKey else { throw BackendError(status: 401, message: "尚未設定 API key。") }
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 6
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("local-keynote-user", forHTTPHeaderField: "OpenAI-Safety-Identifier")
+        request.httpBody = try JSONSerialization.data(withJSONObject: rules.segmentRequest(params))
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            throw BackendError(status: 504, message: "OpenAI 回應逾時。")
+        } catch {
+            throw BackendError(status: 502, message: "無法連線到 OpenAI，請檢查網路。")
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 502
+        let json = try? JSONSerialization.jsonObject(with: data)
+        guard (200..<300).contains(status) else {
+            let message = ((json as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+            return (status, ["error": message ?? "OpenAI 回應錯誤（\(status)）。"])
+        }
+        return (200, ["lines": try RealtimeRules.parseSegmentResponse(json)])
+    }
+
     // Same as relayCall() in server/index.mjs.
     private func relayCall(origin: String, key: String, method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
         guard let url = URL(string: origin + path) else { throw BackendError(status: 400, message: "分享伺服器網址格式不正確。") }
@@ -424,7 +509,7 @@ final class RealtimeBackend {
 
     // Same checks as verifyApiKey() in server/index.mjs.
     private func verify(key: String) async throws -> [String] {
-        let models = [rules.config.models.translation, rules.config.models.transcription]
+        let models = [rules.config.models.translation, rules.config.models.transcription, rules.config.models.segmentation]
         var statuses: [(String, Int)] = []
         await withTaskGroup(of: (String, Int).self) { group in
             for model in models {
@@ -446,7 +531,10 @@ final class RealtimeBackend {
             let warning: String?
             switch status {
             case 0: warning = "暫時無法連線到 OpenAI 驗證金鑰，已先儲存。"
-            case 403, 404: warning = "這把金鑰目前無法使用 \(model)。"
+            case 403, 404:
+                warning = model == rules.config.models.segmentation
+                    ? "這把金鑰目前無法使用 \(model)，智慧斷句會改用一般斷句。"
+                    : "這把金鑰目前無法使用 \(model)。"
             case 400...: warning = "驗證 \(model) 時 OpenAI 回應 \(status)。"
             default: warning = nil
             }

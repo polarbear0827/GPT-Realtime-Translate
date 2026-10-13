@@ -329,6 +329,11 @@
             <input id="playAudioToggle" type="checkbox" />
             <span>播放翻譯語音</span>
           </label>
+          <label class="switch">
+            <input id="smartBreaksToggle" type="checkbox" />
+            <span>智慧斷句（AI 依語意分行）</span>
+          </label>
+          <p class="field-hint">由 OpenAI 文字模型依語意、語氣判斷一句話在哪裡結束，只決定在哪裡換行，不改動字幕內容。一小時約多花 0.5～1 美元；關閉後改用標點、停頓與連接詞斷句。</p>
           <label class="field">
             <span>字幕背景</span>
             <select id="displayBackgroundSelect">

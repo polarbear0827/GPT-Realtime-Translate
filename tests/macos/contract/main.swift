@@ -25,6 +25,10 @@ for fixture in fixtures {
             results.append(["ok": try ShareRules.validatePublishKey(fixture["value"])])
         case "roomTitle":
             results.append(["ok": ShareRules.normalizeRoomTitle(fixture["value"])])
+        case "segment":
+            results.append(["ok": rules.segmentRequest(try rules.validateSegment(body))])
+        case "segmentResponse":
+            results.append(["ok": try RealtimeRules.parseSegmentResponse(fixture["value"])])
         case "csp":
             results.append(["ok": ShareRules.contentSecurityPolicy(relayOrigin: fixture["value"] as? String)])
         default:

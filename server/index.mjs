@@ -7,8 +7,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ValidationError,
   buildTranscriptionSecretRequest,
+  buildSegmentRequest,
   buildTranslationSecretRequest,
+  parseSegmentResponse,
   validateApiKeyFormat,
+  validateSegmentRequest,
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "./realtime.mjs";
@@ -19,6 +22,8 @@ const publicDir = join(rootDir, "public");
 const config = JSON.parse(readFileSync(join(publicDir, "realtime-config.json"), "utf8"));
 const appVersion = readFileSync(join(rootDir, "VERSION"), "utf8").trim();
 const UPSTREAM_TIMEOUT_MS = 15_000;
+// A line break that arrives later than this is no longer useful on screen.
+const SEGMENT_TIMEOUT_MS = 6_000;
 const OPENAI = "https://api.openai.com/v1";
 
 const securityHeaders = {
@@ -153,7 +158,48 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
       return;
     }
 
+    if (pathname === "/api/segment" && req.method === "POST") {
+      const params = validateSegmentRequest(await readJson(req), config);
+      if (!apiKey) {
+        sendJson(res, 401, { error: "尚未設定 API key。" });
+        return;
+      }
+      await segment(res, params);
+      return;
+    }
+
     sendJson(res, 404, { error: "Not found." });
+  }
+
+  async function segment(res, params) {
+    let upstream;
+    try {
+      upstream = await fetchImpl(`${OPENAI}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "OpenAI-Safety-Identifier": "local-keynote-user",
+        },
+        body: JSON.stringify(buildSegmentRequest(params, config)),
+        signal: AbortSignal.timeout(SEGMENT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timedOut = error?.name === "TimeoutError";
+      sendJson(res, timedOut ? 504 : 502, { error: timedOut ? "OpenAI 回應逾時。" : "無法連線到 OpenAI，請檢查網路。" });
+      return;
+    }
+    let data = {};
+    try {
+      data = await upstream.json();
+    } catch {
+      // Not JSON.
+    }
+    if (!upstream.ok) {
+      sendJson(res, upstream.status, { error: data?.error?.message || `OpenAI 回應錯誤（${upstream.status}）。` });
+      return;
+    }
+    sendJson(res, 200, { lines: parseSegmentResponse(data) });
   }
 
   async function proxyClientSecret(res, endpoint, payload) {
@@ -253,7 +299,7 @@ export async function relayCall(fetchImpl, share, method, path, body) {
 // Checks the key and model access once when the key is saved, so problems surface during rehearsal
 // instead of when pressing Start on stage.
 export async function verifyApiKey(key, fetchImpl = fetch) {
-  const models = [config.models.translation, config.models.transcription];
+  const models = [config.models.translation, config.models.transcription, config.models.segmentation];
   const warnings = [];
   const results = await Promise.all(
     models.map(async (model) => {
@@ -273,7 +319,9 @@ export async function verifyApiKey(key, fetchImpl = fetch) {
   }
   for (const { model, status } of results) {
     if (status === 0) warnings.push("暫時無法連線到 OpenAI 驗證金鑰，已先儲存。");
-    else if (status === 403 || status === 404) warnings.push(`這把金鑰目前無法使用 ${model}。`);
+    else if (status === 403 || status === 404) {
+      warnings.push(model === config.models.segmentation ? `這把金鑰目前無法使用 ${model}，智慧斷句會改用一般斷句。` : `這把金鑰目前無法使用 ${model}。`);
+    }
     else if (status >= 400) warnings.push(`驗證 ${model} 時 OpenAI 回應 ${status}。`);
   }
   return { rejected: null, warnings: [...new Set(warnings)] };

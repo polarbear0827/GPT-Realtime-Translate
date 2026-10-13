@@ -49,7 +49,7 @@
 | 💸 **More viewers, same cost** | Translation runs once, on the speaker's Mac; only text is shared. The sharing relay fits in Cloudflare's free plan. |
 | 🎧 **Translate videos without speakers** | Captures what the Mac is playing (YouTube, online meetings) digitally — headphones are fine — and floats the translation over full-screen video. |
 | 🔐 **Your key stays on your Mac** | The OpenAI key lives only in the app (optionally in the macOS Keychain); the web page never sees it. The sharing relay is yours too. |
-| 🧠 **Two specialised models** | `gpt-live-transcribe` for an accurate source transcript (with keywords and context), `gpt-realtime-translate` for translation. |
+| 🧠 **Specialised models** | `gpt-live-transcribe` for an accurate source transcript (with keywords and context), `gpt-realtime-translate` for translation, `gpt-4.1-mini` for line breaks by meaning. |
 | 🛟 **Built for long sessions** | Automatic reconnection, a seamless switch before the 60-minute session limit, the last sentence finished on stop, transcript auto-backup. |
 | 📝 **Subtitles ready after the talk** | Export SRT (source / translation / bilingual), Markdown, plain text or JSON; SRT cues follow subtitle conventions. |
 | 🪶 **Small and native** | A universal Swift + WKWebView app of about 4 MB — no Electron, no background services. |
@@ -58,7 +58,7 @@
 
 ### Live bilingual captions
 
-Source and translation stacked, **one phrase per line**: when the speaker finishes a sentence or the translation pauses, the caption moves to a new line — the newest line stands out and older ones fade, like film subtitles. Switch between bilingual, translation only and source only. 13 source and 13 target languages; Chinese is converted to Taiwan Traditional Chinese with OpenCC.
+Source and translation stacked, **one phrase per line, broken by meaning**: an AI model decides where each phrase ends from its wording, tone and meaning — even when the translation has no punctuation — instead of cutting after a fixed number of characters. The newest line stands out and older ones fade, like film subtitles. Switch between bilingual, translation only and source only. 13 source and 13 target languages; Chinese is converted to Taiwan Traditional Chinese with OpenCC.
 
 <p align="center"><img src="docs/images/main-window.png" alt="Main window with live bilingual captions (dark)" /></p>
 
@@ -193,7 +193,10 @@ flowchart LR
 ### Captions and transcript
 
 - Source and translation are separate timed tracks; SRT export aligns them by overlap, so translation lag never shifts the source.
-- **One phrase per line**: streamed text starts a new line at a *confirmed* sentence end (`3.` may still become `3.14`), when the translation pauses for 0.9 s or more (the model's Chinese often has no punctuation, so pauses are the most reliable phrase boundary), or at a comma when a phrase runs long. The main window, caption window, floating captions and audience phones all use the same lines.
+- **Line breaks by meaning**: the translation model's Chinese often streams out with no punctuation, so a text model (`gpt-4.1-mini`) chooses the line breaks. While the translation streams, the app sends the phrase that hasn't been broken yet, with the line before it, and the model marks where each phrase ends — a finished statement, before a connective, after a sentence-final particle, a change of subject. It **only marks breaks and never changes the text**: the app maps every returned line back onto the original character by character and ignores answers that don't match. The last phrase may still be unfinished, so it stays open for the next round. One request per stream is in flight at a time; text that arrives meanwhile is sent when it returns.
+- **Tone and pauses**: a *confirmed* sentence end (`3.` may still become `3.14`) and a translation pause of 0.9 s or more still start a new line right away, without waiting for the model.
+- **Fallback**: offline, without access to the model, or with 「智慧斷句」 (smart line breaks) turned off in Settings, rules take over: a new line at commas, and a long phrase is cut at its most natural point (before a connective, after a particle) at a word boundary found with `Intl.Segmenter` — never inside a word. Repeated failures switch to the fallback automatically, with one notice.
+- The main window, caption window, floating captions, audience phones and exported SRT all use the same lines; half-width commas in Chinese become full-width, and a line break replaces a trailing comma.
 - Simplified → Traditional conversion (OpenCC `cn → twp`) runs on whole passages at display/export time, never on single deltas, so words split across deltas (头 + 发 → 頭髮) still convert correctly.
 - Rendering is batched to one update per animation frame; the floating captions run on a timer, so they keep updating while the main window is hidden behind full-screen video.
 
@@ -250,7 +253,7 @@ Locally (`wrangler dev`), 2,000 viewers got 100% of updates, 95% within 65 ms. R
 npm run relay:load-test -- --url https://klt-relay.<your-name>.workers.dev --viewers 1000 --seconds 30
 ```
 
-**Cost**: OpenAI bills the speaker's audio only, regardless of how many people watch. Cloudflare's free plan allows 100,000 requests a day; an hour-long talk with 1,000 viewers uses a small fraction of that.
+**Cost**: OpenAI bills the speaker's audio only, regardless of how many people watch (smart line breaks add a few text-model tokens, about US$0.50–1 for an hour-long talk, and can be turned off in Settings). Cloudflare's free plan allows 100,000 requests a day; an hour-long talk with 1,000 viewers uses a small fraction of that.
 
 ## Security and privacy
 
@@ -270,9 +273,9 @@ Every push runs automatically on GitHub Actions (Linux and macOS):
 
 | Tests | Coverage |
 |---|---|
-| **Node unit and integration tests (96)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), caption line breaking, the share publisher, room logic, the QR encoder |
+| **Node unit and integration tests (114)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), line breaks by meaning (alignment, request scheduling, fallback rules), the share publisher, room logic, the QR encoder |
 | **Swift ↔ Node contract test** | Compiles the native backend and checks both produce identical results for the same inputs |
-| **macOS end-to-end checks (51)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
+| **macOS end-to-end checks (54)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
 | **Relay end-to-end tests (8) + load test** | The real Worker in `wrangler dev` (workerd): auth, fan-out, receive-only viewers, host reconnection and resync; CI also runs 300 simulated viewers |
 
 ## Development

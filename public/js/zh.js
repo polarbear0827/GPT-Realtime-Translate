@@ -3,6 +3,8 @@
 // passages at display/export time, never on individual streaming deltas, so phrases split across
 // deltas (头+发 → 頭髮) still convert correctly.
 
+import { fullwidthPunctuation } from "./text.js";
+
 let converter = null;
 let loading = null;
 let version = 0;
@@ -48,9 +50,9 @@ export function toTraditional(text) {
   return converter ? converter(text) : fallbackConvert(text);
 }
 
-// Display text for a language: only Chinese needs conversion.
+// Display text for a language: only Chinese needs conversion (and full-width punctuation).
 export function displayText(text, language) {
-  return language === "zh" ? toTraditional(text) : text;
+  return language === "zh" ? toTraditional(fullwidthPunctuation(text)) : text;
 }
 
 // Minimal fallback used only when OpenCC fails to load. It deliberately omits characters whose

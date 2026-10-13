@@ -86,6 +86,7 @@ const els = {
   translatedFont: $("translatedFont"),
   translatedFontValue: $("translatedFontValue"),
   playAudioToggle: $("playAudioToggle"),
+  smartBreaksToggle: $("smartBreaksToggle"),
   displayBackgroundSelect: $("displayBackgroundSelect"),
   displayAlignSelect: $("displayAlignSelect"),
   pauseBtn: $("pauseBtn"),
@@ -269,6 +270,7 @@ function applySettingsToControls() {
   els.sourceFont.value = String(settings.sourceFontSize);
   els.translatedFont.value = String(settings.translatedFontSize);
   els.playAudioToggle.checked = settings.playAudio;
+  els.smartBreaksToggle.checked = settings.smartBreaks;
   els.displayBackgroundSelect.value = settings.displayBackground;
   els.displayAlignSelect.value = settings.displayAlign;
   els.autoBackupToggle.checked = settings.autoBackup;
@@ -385,6 +387,10 @@ function bindEvents() {
     if (settings.autoBackup) scheduleBackup();
     else storage.remove(BACKUP_KEY);
   });
+  els.smartBreaksToggle.addEventListener("change", () => {
+    updateSetting("smartBreaks", els.smartBreaksToggle.checked);
+    controller.setSmartBreaks(settings.smartBreaks);
+  });
   els.latencyInput.addEventListener("change", () => updateSetting("translationLatencyMs", clampNumber(els.latencyInput, 0, 5000)));
   els.srtOffsetInput.addEventListener("change", () => updateSetting("srtOffsetMs", clampNumber(els.srtOffsetInput, -10000, 10000)));
   els.markBtn.addEventListener("click", () => controller.markParagraph());
@@ -446,6 +452,7 @@ async function startSession() {
     keywords: settings.keywords,
     translationLatencyMs: settings.translationLatencyMs,
     playAudio: settings.playAudio,
+    smartBreaks: settings.smartBreaks,
     audioSource: settings.audioSource,
     muteSystemAudio: settings.muteSystemAudio,
   };

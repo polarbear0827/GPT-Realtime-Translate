@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.2.0 - 2026-10-13
+
+- **Line breaks by meaning, not by length.** The translation's Chinese often streams out with no
+  punctuation, so v1.1.0 still let phrases run long and then cut them after a fixed number of
+  characters, sometimes mid-word. Now a small text model (`gpt-4.1-mini`) reads the phrase that's
+  still open, with the line before it, and marks where each phrase ends by its wording, tone and
+  meaning; finished phrases become lines right away and the unfinished end stays open. It only marks
+  breaks: every returned line is matched back onto the original text, character by character, and
+  answers that don't match are ignored. One request per stream is in flight at a time.
+- Sentence ends and translation pauses still start a new line immediately.
+- Fallback without the model (offline, no access, or turned off): a new line at commas, and a long
+  phrase is cut at its most natural point — before a connective, after a sentence-final particle —
+  at a word boundary (`Intl.Segmenter`), never inside a word. Repeated failures switch to it with
+  one notice.
+- New setting 「智慧斷句」 (on by default). The key check also verifies access to the text model.
+- Lines keep the time their own text arrived, so SRT cues are more accurate.
+- Half-width commas in Chinese become full-width (「工具,能」 → 「工具，能」), and a line break replaces a
+  trailing comma.
+- Both backends (Node and Swift) gained `POST /api/segment`; the prompt and limits live in
+  `public/realtime-config.json` and the contract test keeps the two in sync.
+
 ## v1.1.0 - 2026-10-13
 
 - **One phrase per line.** Captions no longer run together: a new line starts when a sentence ends,

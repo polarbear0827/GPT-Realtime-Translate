@@ -4,11 +4,13 @@
 // - Each connection reconnects on its own with backoff, and is rotated before the 60-minute
 //   Realtime session limit without dropping audio.
 // - gpt-live-transcribe has no server VAD, so speech turns are committed from a client-side VAD.
+// - Streamed captions are broken into phrases by meaning (segmenter.js) unless smart breaks are off.
 
 import * as defaultApi from "./api.js";
 import { AudioInput, CHUNK_MS } from "./audio.js";
 import { NativeTranslateClient } from "./native-translate.js";
 import { TranscribeClient, TranslateClient, delay as defaultDelay } from "./realtime.js";
+import { PhraseSegmenter } from "./segmenter.js";
 import { SystemAudioInput } from "./system-audio.js";
 import { VoiceActivityDetector } from "./vad.js";
 
@@ -25,6 +27,8 @@ const SOURCE_STREAM_LATENCY_MS = 600;
 const SYSTEM_AUDIO_SIGNAL_GRACE_MS = 5_000;
 const ERROR_REPEAT_MS = 15_000;
 const TICK_MS = 500;
+// The line before the open phrase, sent to the segmenter as context.
+const CONTEXT_CHARS = 60;
 
 const LABELS = { translate: "翻譯", transcribe: "轉錄" };
 
@@ -134,7 +138,9 @@ export class SessionController {
       reconnecting: { translate: false, transcribe: false },
       rotating: { translate: false, transcribe: false },
       nextRotation: { translate: Infinity, transcribe: Infinity },
+      segmenter: null,
     };
+    run.segmenter = this.createSegmenter(run, options);
     this.run = run;
     this.connections = { transcribe: needTranscribe ? "connecting" : "off", translate: needTranslate ? "connecting" : "off" };
     this.onCaptions();
@@ -196,6 +202,45 @@ export class SessionController {
     await Promise.all(
       [run.translate, run.transcribe, run.nextTranscribe].map((client) => client?.close({ graceful }).catch(() => {})),
     );
+    run.segmenter?.close();
+  }
+
+  createSegmenter(run, options) {
+    if (typeof this.api.segmentText !== "function") return null;
+    const segmenter = new PhraseSegmenter({
+      request: (body) => this.api.segmentText(body),
+      read: (key) => this.openPhrase(key),
+      apply: (key, heads) => {
+        if (run !== this.run) return;
+        this.eachStore((store) => store.breakStream(key, heads));
+        this.onCaptions();
+      },
+      onDisabled: (error) => {
+        if (run === this.run) this.onNotice("warning", `智慧斷句暫時無法使用（${error?.message || "連線失敗"}），這場改用一般斷句。`);
+      },
+    });
+    segmenter.setEnabled(options.smartBreaks !== false);
+    return segmenter;
+  }
+
+  setSmartBreaks(enabled) {
+    this.run?.segmenter?.setEnabled(enabled);
+  }
+
+  // The open phrase of a caption stream, with the line before it.
+  openPhrase(key) {
+    const store = this.feed ?? this.store;
+    const entry = store.openStream(key);
+    if (!entry?.text.trim()) return null;
+    let context = "";
+    for (let index = store.entries.length - 1; index >= 0; index -= 1) {
+      const other = store.entries[index];
+      if (other !== entry && other.track === entry.track && other.seq < entry.seq && other.text.trim()) {
+        context = Array.from(other.text.trim()).slice(-CONTEXT_CHARS).join("");
+        break;
+      }
+    }
+    return { text: entry.text, language: entry.language, cjk: Boolean(this.languageInfo(entry.language)?.cjk), context };
   }
 
   // Ends the current paragraph: commits the speech turn and closes open sentences.
@@ -496,6 +541,7 @@ export class SessionController {
   handleTranslateEvent(run, event) {
     if (run !== this.run) return;
     const now = performance.now();
+    const assisted = Boolean(run.segmenter?.active);
     if (event.type === "output-delta") {
       const language = run.options.targetLanguage;
       run.streamTouched.set("translation", now);
@@ -506,11 +552,14 @@ export class SessionController {
           delta: event.delta,
           atMs: rel(now - run.options.translationLatencyMs),
           cjk: this.languageInfo(language).cjk,
+          assisted,
         }),
       );
+      run.segmenter?.update("translation");
       this.onCaptions();
     } else if (event.type === "input-delta" && run.sourceFromTranslate) {
       const language = run.options.sourceLanguage;
+      const { cjk } = this.languageInfo(language);
       run.streamTouched.set("source", now);
       this.record((store, rel) =>
         store.appendStream("source", {
@@ -518,9 +567,12 @@ export class SessionController {
           language,
           delta: event.delta,
           atMs: rel(now - SOURCE_STREAM_LATENCY_MS),
-          cjk: this.languageInfo(language).cjk,
+          cjk,
+          assisted: assisted && cjk,
         }),
       );
+      // The input transcript is punctuated, except in Chinese and Japanese.
+      if (cjk) run.segmenter?.update("source");
       this.onCaptions();
     } else if (event.type === "error") {
       this.handleApiError(run, "translate", event.error);
