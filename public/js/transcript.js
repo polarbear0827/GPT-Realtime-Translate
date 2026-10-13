@@ -1,9 +1,9 @@
 // Transcript store. Source and translation are kept as independent tracks of timed entries:
 // - transcription items (one per committed speech turn) are keyed by the API item_id
 // - streamed text (translation output, translate input transcript) is split into phrases: by meaning,
-//   by a language model (segmenter.js → breakStream), and here at sentence ends and when the speech
-//   pauses (the translation often has no punctuation). Without the model, phrases are also cut at
-//   clause marks and, when they run long, at the most natural word boundary. Each entry is one line.
+//   by a language model (segmenter.js → breakStream), and here at sentence ends, at every comma and
+//   when the speech pauses (the translation often has no punctuation). Without the model, phrases
+//   that run long are also cut at the most natural word boundary. Each entry is one line.
 // Exporters align the two tracks by time, so a lagging translation never shifts the source text.
 // Text is stored as received (possibly Simplified Chinese); conversion happens at display/export time.
 
@@ -13,8 +13,7 @@ import { lastSentenceBoundary } from "./text.js";
 // A gap this long between deltas ends the phrase, once it has a few words.
 const PAUSE_SPLIT_MS = 900;
 const PAUSE_MIN_CHARS = { cjk: 6, other: 16 };
-// Without the language model: a clause mark ends a phrase this long, and longer phrases are cut.
-const CLAUSE_MIN_CHARS = { cjk: 6, other: 20 };
+// Without the language model, longer phrases are cut.
 const RULE_MAX_CHARS = { cjk: 24, other: 84 };
 // With it, only a phrase it hasn't answered about in time gets this long.
 const ASSISTED_MAX_CHARS = { cjk: 40, other: 140 };
@@ -264,14 +263,13 @@ export class TranscriptStore {
   }
 }
 
-// Where a phrase ends without the language model's help (-1: not yet). With it, only a phrase it
-// hasn't answered about in time is cut.
+// Where a phrase ends without the language model's help (-1: not yet): after a comma, or, for a
+// phrase that ran long, at its most natural point. With the model, only a phrase it hasn't answered
+// about in time is cut that way.
 function phraseBreak(text, { cjk, language, assisted }) {
   const kind = cjk ? "cjk" : "other";
-  if (!assisted) {
-    const clause = clauseBreak(text, CLAUSE_MIN_CHARS[kind]);
-    if (clause > 0) return clause;
-  }
+  const clause = clauseBreak(text);
+  if (clause > 0) return clause;
   if (text.trim().length <= (assisted ? ASSISTED_MAX_CHARS : RULE_MAX_CHARS)[kind]) return -1;
   return ruleBreak(text, { language, minChars: RULE_MIN_CHARS[kind] });
 }

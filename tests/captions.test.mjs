@@ -13,10 +13,10 @@ function sample() {
   return store;
 }
 
-test("each phrase is its own line, and sentences within a phrase are split", () => {
+test("each phrase is its own line, and sentences and commas within a phrase split it further", () => {
   const store = sample();
   assert.deepEqual(captionLines(store, "translation", { display }), ["下路和中路都很怕Vi來抓", "這也有很多爆發傷害"]);
-  assert.deepEqual(captionLines(store, "source", { display }), ["Lane, mid lane.", "Both very vulnerable to a Vi gank."]);
+  assert.deepEqual(captionLines(store, "source", { display }), ["Lane,", "mid lane.", "Both very vulnerable to a Vi gank."]);
 });
 
 test("only the newest lines are returned, oldest first", () => {

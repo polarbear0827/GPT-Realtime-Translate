@@ -1,8 +1,9 @@
 // Phrase boundaries for live captions. Pure text functions, no DOM.
 // - alignBreaks: maps the line breaks chosen by the language model (see segmenter.js) back onto the
 //   original text, which is never changed.
-// - clauseBreak / ruleBreak: the fallback used when the model isn't available: clause marks,
-//   connectives and sentence-final particles, never inside a word.
+// - clauseBreak / splitClauses: every comma (and semicolon or colon) ends a line.
+// - ruleBreak: the fallback used when the model isn't available: connectives and sentence-final
+//   particles, never inside a word.
 
 const SPACE = /\s/;
 const PUNCTUATION = /[\p{P}\p{S}]/u;
@@ -50,15 +51,31 @@ export function headsAt(text, breaks) {
   return heads;
 }
 
-// Position after the first clause mark that ends a phrase of at least `minChars`, or -1.
-// A mark at the very end isn't confirmed yet ("3," may continue as "3,000").
-export function clauseBreak(text, minChars) {
-  for (const match of text.matchAll(/[，、；：—]|[,;:](?=\s|\p{Script=Han})/gu)) {
+// Commas, semicolons and colons; not the enumeration comma 、 (lists stay on one line) and not
+// inside numbers (3,000 or 3:00).
+const CLAUSE_MARKS = /[，；：]|[,;:](?=\s|\p{Script=Han}|$)/gu;
+
+function clauseCuts(text) {
+  const cuts = [];
+  for (const match of text.matchAll(CLAUSE_MARKS)) {
     let cut = match.index + match[0].length;
     while (cut < text.length && (SPACE.test(text[cut]) || CLOSING.test(text[cut]))) cut += 1;
-    if (cut < text.length && text.slice(0, match.index).trim().length >= minChars) return cut;
+    if (text.slice(0, match.index).trim() && cut > (cuts.at(-1) ?? 0)) cuts.push(cut);
   }
-  return -1;
+  return cuts;
+}
+
+// Position after the first comma that ends a phrase, or -1. A comma at the very end isn't confirmed
+// yet ("3," may continue as "3,000").
+export function clauseBreak(text) {
+  return clauseCuts(text).find((cut) => cut < text.length) ?? -1;
+}
+
+// Finished text cut after every comma.
+export function splitClauses(text) {
+  const lines = headsAt(text, clauseCuts(text));
+  const rest = text.slice(clauseCuts(text).at(-1) ?? 0).trim();
+  return rest ? [...lines, rest] : lines;
 }
 
 const CJK_CONNECTIVES = [

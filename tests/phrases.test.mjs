@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { alignBreaks, clauseBreak, headsAt, ruleBreak } from "../public/js/phrases.js";
+import { alignBreaks, clauseBreak, headsAt, ruleBreak, splitClauses } from "../public/js/phrases.js";
 
 const text = "有經濟差儘管前期人頭一直往下掉所以他的大樹又快上線了再看男槍";
 
@@ -19,12 +19,16 @@ test("whitespace and punctuation the model added or dropped don't matter; change
   assert.equal(alignBreaks(text, "not lines"), null);
 });
 
-test("without the model, a clause mark ends a phrase once it has a few words", () => {
-  assert.equal(clauseBreak("這局裡有很多工具,能直接", 6), 9);
-  assert.equal(clauseBreak("對，這就是", 6), -1, "too short");
-  assert.equal(clauseBreak("成長到3,000人", 2), -1, "a number, not a clause");
-  assert.equal(clauseBreak("這局裡有很多工具，", 6), -1, "not confirmed until more text arrives");
-  assert.equal(clauseBreak("Probably the right call there, Geckos was", 16), 31);
+test("every comma ends a line; lists, numbers and an unconfirmed comma don't", () => {
+  assert.equal(clauseBreak("這局裡有很多工具,能直接"), 9);
+  assert.equal(clauseBreak("對，這就是"), 2);
+  assert.equal(clauseBreak("Probably the right call there, Geckos was"), 31);
+  assert.equal(clauseBreak("成長到3,000人在3:00"), -1, "numbers");
+  assert.equal(clauseBreak("這局裡有很多工具，"), -1, "not confirmed until more text arrives");
+  assert.equal(clauseBreak("男槍、阿卡麗和Vi"), -1, "enumeration comma");
+  assert.equal(clauseBreak("，所以"), -1, "nothing before it");
+  assert.deepEqual(splitClauses("對，這就是重點；他說：好, OK"), ["對，", "這就是重點；", "他說：", "好,", "OK"]);
+  assert.deepEqual(splitClauses("If he comes online, this gets hard,"), ["If he comes online,", "this gets hard,"]);
 });
 
 test("long phrases are cut where the meaning breaks, never inside a word", () => {

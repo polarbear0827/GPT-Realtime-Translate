@@ -55,15 +55,17 @@ test("without the language model, clause marks end phrases and long ones are cut
   assert.deepEqual(texts(store, "translation"), ["這局裡有很多工具,", "能直接秒掉Quad,", "這就是其中之一", "儘管前期人頭一直往下掉", "所以他的大樹又快上線了再看男槍"]);
 });
 
-test("with the language model, phrases are left to it; only one it hasn't answered about in time is cut", () => {
+test("with the language model, commas still end lines; the rest is left to it unless it's too slow", () => {
   const store = new TranscriptStore();
   const feed = (text) => {
     for (const char of text) store.appendStream("translation", { track: "translation", language: "zh", delta: char, atMs: 0, cjk: true, assisted: true });
   };
   feed("這局裡有很多工具,能直接秒掉Quad,這就是其中之一");
-  assert.deepEqual(texts(store, "translation"), ["這局裡有很多工具,能直接秒掉Quad,這就是其中之一"]);
+  assert.deepEqual(texts(store, "translation"), ["這局裡有很多工具,", "能直接秒掉Quad,", "這就是其中之一"]);
   feed("儘管前期人頭一直往下掉所以他的大樹又快上線了");
-  assert.deepEqual(texts(store, "translation"), ["這局裡有很多工具,", "能直接秒掉Quad,這就是其中之一儘管前期人頭一直往下掉所以他的大樹又快上線了"]);
+  assert.deepEqual(texts(store, "translation").slice(2), ["這就是其中之一儘管前期人頭一直往下掉所以他的大樹又快上線了"], "the model's job");
+  feed("再看男槍和阿卡麗都能衝進後排");
+  assert.deepEqual(texts(store, "translation").slice(2, 4), ["這就是其中之一", "儘管前期人頭一直往下掉所以他的大樹又快上線了再看男槍和阿卡麗都能衝進後排"], "cut once it ran past 40");
 });
 
 test("the model's phrase breaks cut the open phrase, each line keeping the time its text arrived", () => {
@@ -101,10 +103,10 @@ test("a pause in the speech starts a new phrase, even without punctuation", () =
 test("a pause after only a word or two doesn't split", () => {
   const store = new TranscriptStore();
   store.appendStream("translation", { track: "translation", language: "zh", delta: "對", atMs: 0, cjk: true });
-  store.appendStream("translation", { track: "translation", language: "zh", delta: "，這就是重點", atMs: 2000, cjk: true });
+  store.appendStream("translation", { track: "translation", language: "zh", delta: "這就是重點", atMs: 2000, cjk: true });
   store.appendStream("translation", { track: "translation", language: "en", delta: "So", atMs: 0, cjk: false });
   store.sealStream("translation");
-  assert.deepEqual(texts(store, "translation"), ["對，這就是重點So"]);
+  assert.deepEqual(texts(store, "translation"), ["對這就是重點So"]);
 });
 
 test("long English phrases are cut at a word boundary", () => {

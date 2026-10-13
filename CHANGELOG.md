@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.1 - 2026-10-13
+
+- **Every comma starts a new line**, in every caption view, with or without the language model (so do
+  semicolons and colons; not the enumeration comma 、 or numbers such as 3,000 and 3:00). The source
+  transcript's lines are split at commas too.
+- The text model is told the same, so its breaks agree.
+
 ## v1.2.0 - 2026-10-13
 
 - **Line breaks by meaning, not by length.** The translation's Chinese often streams out with no
