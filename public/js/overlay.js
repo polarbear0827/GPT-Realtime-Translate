@@ -1,20 +1,10 @@
-// Builds what the floating caption window shows: the latest sentences of the main track (translation,
-// or the source in source-only mode) and of the original below it. The native window decides how many
-// whole sentences fit; this only converts text for display and splits it into sentences.
+// Builds what the floating caption window shows: the latest caption lines (phrases) of the main track
+// (translation, or the source in source-only mode) and of the original below it. The native window
+// starts each line on a new row and decides how many fit.
 
-import { splitSentences, tailText } from "./text.js";
-
-const TAIL_CHARS = 600;
-const MAX_SENTENCES = 4;
-
-function line(text, language, info, display) {
-  const converted = display(tailText(text, TAIL_CHARS, info.cjk), language);
-  return { sentences: splitSentences(converted).slice(-MAX_SENTENCES), cjk: info.cjk, lang: info.lang };
-}
-
-export function buildOverlayPayload({ mode, sourceText, translationText, sourceLanguage, targetLanguage, languageInfo, display }) {
-  const source = line(sourceText, sourceLanguage, languageInfo(sourceLanguage), display);
+export function buildOverlayPayload({ mode, sourceLines, translationLines, sourceInfo, targetInfo }) {
+  const source = { sentences: sourceLines, cjk: sourceInfo.cjk, lang: sourceInfo.lang };
   if (mode === "source") return { primary: source, secondary: null };
-  const translation = line(translationText, targetLanguage, languageInfo(targetLanguage), display);
-  return { primary: translation, secondary: source.sentences.length ? source : null };
+  const translation = { sentences: translationLines, cjk: targetInfo.cjk, lang: targetInfo.lang };
+  return { primary: translation, secondary: sourceLines.length ? source : null };
 }

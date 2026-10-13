@@ -47,12 +47,47 @@ test("decimals don't split sentences", () => {
   assert.deepEqual(texts(store, "translation"), ["Pi is 3.14 exactly."]);
 });
 
-test("long streams without punctuation are capped at a clause boundary", () => {
+test("long phrases without punctuation are cut at a clause, or at the length limit", () => {
   const store = new TranscriptStore();
-  const text = `${"一".repeat(40)}，${"二".repeat(50)}`;
+  const text = `${"一".repeat(20)}，${"二".repeat(30)}${"三".repeat(40)}`;
   for (const char of text) store.appendStream("translation", { track: "translation", language: "zh", delta: char, atMs: 0, cjk: true });
+  store.sealStream("translation");
   const entries = texts(store, "translation");
-  assert.equal(entries[0], `${"一".repeat(40)}，`);
+  assert.equal(entries[0], `${"一".repeat(20)}，`);
+  assert.ok(entries.every((entry) => entry.length <= 37), entries.join(" | "));
+  assert.equal(entries.join(""), text);
+});
+
+test("a pause in the speech starts a new phrase, even without punctuation", () => {
+  const store = new TranscriptStore();
+  const feed = (delta, atMs) => store.appendStream("translation", { track: "translation", language: "zh", delta, atMs, cjk: true });
+  feed("下路和中路", 0);
+  feed("都很怕FlyQuest的Vi來抓", 300);
+  feed("他們也有很多爆發傷害", 1400);
+  feed("WE那邊的", 3000);
+  feed("路線組合也都很足", 3200);
+  store.sealStream("translation");
+  assert.deepEqual(texts(store, "translation"), ["下路和中路都很怕FlyQuest的Vi來抓", "他們也有很多爆發傷害", "WE那邊的路線組合也都很足"]);
+  assert.deepEqual(store.track("translation").map((entry) => entry.startMs), [0, 1400, 3000]);
+});
+
+test("a pause after only a word or two doesn't split", () => {
+  const store = new TranscriptStore();
+  store.appendStream("translation", { track: "translation", language: "zh", delta: "對", atMs: 0, cjk: true });
+  store.appendStream("translation", { track: "translation", language: "zh", delta: "，這就是重點", atMs: 2000, cjk: true });
+  store.appendStream("translation", { track: "translation", language: "en", delta: "So", atMs: 0, cjk: false });
+  store.sealStream("translation");
+  assert.deepEqual(texts(store, "translation"), ["對，這就是重點So"]);
+});
+
+test("long English phrases are cut at a word boundary", () => {
+  const store = new TranscriptStore();
+  const words = Array.from({ length: 60 }, (_, index) => `word${index}`);
+  for (const word of words) store.appendStream("translation", { track: "translation", language: "en", delta: `${word} `, atMs: 0, cjk: false });
+  store.sealStream("translation");
+  const entries = texts(store, "translation");
+  assert.ok(entries.length > 1);
+  assert.ok(entries.every((entry) => entry.length <= 150 && /^word\d+( word\d+)*$/.test(entry)), entries.join(" | "));
 });
 
 test("empty completed items are removed and unsaved state is tracked", () => {

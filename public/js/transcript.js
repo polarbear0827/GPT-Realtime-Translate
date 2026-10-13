@@ -1,12 +1,17 @@
 // Transcript store. Source and translation are kept as independent tracks of timed entries:
 // - transcription items (one per committed speech turn) are keyed by the API item_id
-// - streamed text (translation output, translate input transcript) is split into sentences here
+// - streamed text (translation output, translate input transcript) is split into phrases here: at
+//   sentence ends, when the speech pauses (the translation often has no punctuation), and at a clause
+//   when a phrase runs long. Each entry is one caption line.
 // Exporters align the two tracks by time, so a lagging translation never shifts the source text.
 // Text is stored as received (possibly Simplified Chinese); conversion happens at display/export time.
 
 import { lastSentenceBoundary } from "./text.js";
 
-const STREAM_MAX_CHARS = { cjk: 80, other: 220 };
+const STREAM_MAX_CHARS = { cjk: 36, other: 140 };
+// A gap this long between deltas ends the phrase, once it has a few words.
+const PAUSE_SPLIT_MS = 900;
+const PAUSE_MIN_CHARS = { cjk: 6, other: 16 };
 
 export class TranscriptStore {
   constructor() {
@@ -68,7 +73,8 @@ export class TranscriptStore {
   }
 
   create(fields) {
-    const entry = { id: `e${this.nextId++}`, final: false, text: "", ...fields };
+    const seq = this.nextId++;
+    const entry = { id: `e${seq}`, seq, final: false, text: "", ...fields };
     this.entries.push(entry);
     this.byId.set(entry.id, entry);
     this.emit({ type: "add", entry });
@@ -112,6 +118,11 @@ export class TranscriptStore {
   appendStream(streamKey, { track, language, delta, atMs, cjk }) {
     if (!delta) return;
     let entry = this.openStream(streamKey);
+    const minChars = cjk ? PAUSE_MIN_CHARS.cjk : PAUSE_MIN_CHARS.other;
+    if (entry && atMs - entry.endMs >= PAUSE_SPLIT_MS && entry.text.trim().length >= minChars) {
+      this.sealStream(streamKey);
+      entry = null;
+    }
     if (!entry) {
       entry = this.create({ track, language, startMs: atMs, endMs: atMs, text: "" });
       this.streams.set(streamKey, entry);
@@ -128,8 +139,7 @@ export class TranscriptStore {
       // terminator arrived, not when the following sentence started.
       this.splitStream(streamKey, entry, boundary, atMs, boundary <= previousLength ? previousEnd : atMs);
     } else if (entry.text.length > maxChars) {
-      const clause = Math.max(entry.text.lastIndexOf("，"), entry.text.lastIndexOf(", "), entry.text.lastIndexOf("、"));
-      this.splitStream(streamKey, entry, clause > maxChars / 3 ? clause + 1 : entry.text.length, atMs, atMs);
+      this.splitStream(streamKey, entry, softBreak(entry.text, maxChars, cjk), atMs, atMs);
     } else {
       this.emit({ type: "update", entry });
     }
@@ -226,4 +236,16 @@ export class TranscriptStore {
     this.epochWall = data.startedAt ? Date.parse(data.startedAt) || Date.now() : Date.now();
     return true;
   }
+}
+
+// Where to cut a phrase that ran past `maxChars`: after the last clause mark, or (in space-separated
+// languages) the last space, if that keeps at least a third of it; otherwise at the end.
+function softBreak(text, maxChars, cjk) {
+  const marks = ["，", "、", "；", "：", ", ", "; "].map((mark) => {
+    const index = text.lastIndexOf(mark);
+    return index < 0 ? -1 : index + mark.trimEnd().length;
+  });
+  if (!cjk) marks.push(text.lastIndexOf(" "));
+  const cut = Math.max(...marks);
+  return cut > maxChars / 3 ? cut : text.length;
 }

@@ -58,7 +58,7 @@
 
 ### Live bilingual captions
 
-Source and translation stacked; the newest sentence stands out while older text fades. Switch between bilingual, translation only and source only. 13 source and 13 target languages; Chinese is converted to Taiwan Traditional Chinese with OpenCC.
+Source and translation stacked, **one phrase per line**: when the speaker finishes a sentence or the translation pauses, the caption moves to a new line — the newest line stands out and older ones fade, like film subtitles. Switch between bilingual, translation only and source only. 13 source and 13 target languages; Chinese is converted to Taiwan Traditional Chinese with OpenCC.
 
 <p align="center"><img src="docs/images/main-window.png" alt="Main window with live bilingual captions (dark)" /></p>
 
@@ -84,7 +84,7 @@ What the audience sees: large text, the newest sentence highlighted, optional or
 
 ### Translating what your Mac plays (floating captions)
 
-Choose the audio source "電腦播放的聲音" (what the Mac is playing): the app captures the audio digitally with Core Audio — nothing has to play through the speakers — and shows the translation in a frosted, always-on-top floating window that stays visible over full-screen video. Resize it freely (the text grows with it), change its transparency, or lock it so clicks pass through.
+Choose the audio source "電腦播放的聲音" (what the Mac is playing): the app captures the audio digitally with Core Audio — nothing has to play through the speakers — and shows the translation in a frosted, always-on-top floating window that stays visible over full-screen video — also one phrase per line. Resize it freely (the text grows with it), change its transparency, or lock it so clicks pass through.
 
 <p align="center"><img src="docs/images/floating-captions.jpg" alt="Floating captions: a Korean video translated into Chinese" /></p>
 
@@ -193,7 +193,7 @@ flowchart LR
 ### Captions and transcript
 
 - Source and translation are separate timed tracks; SRT export aligns them by overlap, so translation lag never shifts the source.
-- Streamed text is split at *confirmed* sentence ends (`3.` may still become `3.14`), and at commas when a sentence runs long.
+- **One phrase per line**: streamed text starts a new line at a *confirmed* sentence end (`3.` may still become `3.14`), when the translation pauses for 0.9 s or more (the model's Chinese often has no punctuation, so pauses are the most reliable phrase boundary), or at a comma when a phrase runs long. The main window, caption window, floating captions and audience phones all use the same lines.
 - Simplified → Traditional conversion (OpenCC `cn → twp`) runs on whole passages at display/export time, never on single deltas, so words split across deltas (头 + 发 → 頭髮) still convert correctly.
 - Rendering is batched to one update per animation frame; the floating captions run on a timer, so they keep updating while the main window is hidden behind full-screen video.
 
@@ -270,9 +270,9 @@ Every push runs automatically on GitHub Actions (Linux and macOS):
 
 | Tests | Coverage |
 |---|---|
-| **Node unit and integration tests (90)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), the share publisher, room logic, the QR encoder |
+| **Node unit and integration tests (96)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), caption line breaking, the share publisher, room logic, the QR encoder |
 | **Swift ↔ Node contract test** | Compiles the native backend and checks both produce identical results for the same inputs |
-| **macOS end-to-end checks (50)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
+| **macOS end-to-end checks (51)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
 | **Relay end-to-end tests (8) + load test** | The real Worker in `wrangler dev` (workerd): auth, fan-out, receive-only viewers, host reconnection and resync; CI also runs 300 simulated viewers |
 
 ## Development

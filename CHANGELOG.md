@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.0 - 2026-10-13
+
+- **One phrase per line.** Captions no longer run together: a new line starts when a sentence ends,
+  when the translation pauses (0.9 s or more — the model's Chinese often has no punctuation), or at a
+  comma when a phrase runs long. The newest line is brightest and earlier lines fade.
+- The main window, the caption window, the floating captions (each phrase starts its own row) and the
+  audience phones all use the same lines, taken from one live transcript; SRT cues follow them too.
+- Screenshots in the README show the new layout.
+
 ## v1.0.0 - 2026-10-13
 
 First stable release. Everything from the 0.x series, ready for real events:

@@ -1,6 +1,6 @@
 import * as api from "./api.js";
 import { AudioInput, levelToDb, listMicrophones, microphonePermissionState } from "./audio.js";
-import { CaptionView, LiveTrack } from "./captions.js";
+import { CaptionView, captionLines } from "./captions.js";
 import { exportJson, exportMarkdown, exportSrt, exportText } from "./exporters.js";
 import { buildOverlayPayload } from "./overlay.js";
 import { platform } from "./platform.js";
@@ -16,6 +16,8 @@ import { displayText, ensureZhConverter } from "./zh.js";
 const BACKUP_KEY = "keynote:transcriptBackup";
 const DISPLAY_CHANNEL = "klt-display";
 const OVERLAY_INTERVAL_MS = 100;
+const OVERLAY_LINES = 4;
+const FEED_LIMIT = 400;
 const isDisplayView = new URLSearchParams(location.search).get("view") === "display";
 
 const $ = (id) => document.getElementById(id);
@@ -115,10 +117,8 @@ const settings = loadSettings();
 const storage = safeStorage();
 const toaster = createToaster(els.toasts);
 const store = new TranscriptStore();
-// Every sentence, recorded or not: audience sharing publishes from it.
+// Every phrase, recorded or not: the live captions, floating captions and audience sharing use it.
 const feed = new TranscriptStore();
-const liveSource = new LiveTrack();
-const liveTranslation = new LiveTrack();
 const sourceView = new CaptionView(els.sourceCaption, "等待語音輸入…");
 const translationView = new CaptionView(els.translatedCaption, "等待翻譯…");
 const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(DISPLAY_CHANNEL) : null;
@@ -137,6 +137,8 @@ let lastKeepAwake = null;
 let lastLeaveGuard = "";
 let overlayState = { visible: false, locked: false, opacity: 0.85, lines: 2, showOriginal: true };
 let share = null;
+// Captions show phrases from this sequence number on (see clearCaptions).
+let captionsFrom = 0;
 let overlayTimer = 0;
 let lastOverlaySent = 0;
 let lastOverlayPayload = "";
@@ -144,8 +146,6 @@ let lastOverlayPayload = "";
 const controller = new SessionController({
   store,
   feed,
-  liveSource,
-  liveTranslation,
   isRecording: () => settings.recording,
   languageInfo,
   onChange: () => scheduleStatus(),
@@ -164,7 +164,7 @@ export function languageInfo(code) {
 
 // Dev-server diagnostics only (http://127.0.0.1:8787/?debug): exposes internals to the console.
 if (platform.kind === "web" && new URLSearchParams(location.search).has("debug")) {
-  window.__klt = { store, feed, controller, liveSource, liveTranslation, scheduleCaptions, share: () => share };
+  window.__klt = { store, feed, controller, scheduleCaptions, share: () => share };
 }
 
 if (isDisplayView) initDisplayView();
@@ -189,14 +189,8 @@ function applyDisplayState(data) {
   els.captionLayout.dataset.mode = data.mode;
   applyLayout(data.settings);
   applyTheme(data.settings.theme);
-  for (const [view, part] of [
-    [sourceView, data.source],
-    [translationView, data.translation],
-  ]) {
-    view.textNode.data = part.text;
-    view.element.lang = part.lang;
-    view.element.classList.toggle("is-empty", !part.text);
-  }
+  sourceView.render(data.source.lines ?? [], data.source.lang);
+  translationView.render(data.translation.lines ?? [], data.translation.lang);
   renderCaptionQr(els.captionQr, els.captionQrCode, data.share);
   applyQrDialog(els.qrDialog, data.qr);
 }
@@ -462,6 +456,8 @@ async function startSession() {
     toaster.show("info", "接續記錄到目前的逐字稿。要從頭開始，請先在設定中清除逐字稿。", { key: "resume" });
   }
   loadChineseIfNeeded();
+  // A new run starts with empty captions; the transcript keeps everything.
+  captionsFrom = feed.nextId;
   try {
     await controller.start(options);
     refreshMicrophones();
@@ -594,8 +590,9 @@ function scheduleCaptions() {
 
 function renderCaptions() {
   if (paused) return;
-  sourceView.render(liveSource, settings.sourceLanguage, languageInfo(settings.sourceLanguage));
-  translationView.render(liveTranslation, settings.targetLanguage, languageInfo(settings.targetLanguage));
+  if (feed.entries.length > FEED_LIMIT * 1.25) feed.trim(FEED_LIMIT);
+  sourceView.render(captionLines(feed, "source", { from: captionsFrom }), languageInfo(settings.sourceLanguage).lang);
+  translationView.render(captionLines(feed, "translation", { from: captionsFrom }), languageInfo(settings.targetLanguage).lang);
   broadcastCaptions();
 }
 
@@ -603,8 +600,8 @@ function broadcastCaptions() {
   channel?.postMessage({
     type: "captions",
     mode: settings.captionMode,
-    source: { text: sourceView.textNode.data, lang: languageInfo(settings.sourceLanguage).lang },
-    translation: { text: translationView.textNode.data, lang: languageInfo(settings.targetLanguage).lang },
+    source: { lines: sourceView.lines, lang: languageInfo(settings.sourceLanguage).lang },
+    translation: { lines: translationView.lines, lang: languageInfo(settings.targetLanguage).lang },
     settings: {
       captionMode: settings.captionMode,
       splitRatio: settings.splitRatio,
@@ -630,8 +627,7 @@ function togglePause() {
 }
 
 function clearCaptions() {
-  liveSource.clear();
-  liveTranslation.clear();
+  captionsFrom = feed.nextId;
   if (paused) togglePause();
   scheduleCaptions();
   scheduleOverlay();
@@ -852,14 +848,13 @@ function scheduleOverlay() {
 
 function sendOverlay() {
   lastOverlaySent = performance.now();
+  const options = { from: captionsFrom, limit: OVERLAY_LINES };
   const payload = buildOverlayPayload({
     mode: settings.captionMode,
-    sourceText: liveSource.text(languageInfo(settings.sourceLanguage).cjk),
-    translationText: liveTranslation.text(languageInfo(settings.targetLanguage).cjk),
-    sourceLanguage: settings.sourceLanguage,
-    targetLanguage: settings.targetLanguage,
-    languageInfo,
-    display: displayText,
+    sourceLines: captionLines(feed, "source", options),
+    translationLines: captionLines(feed, "translation", options),
+    sourceInfo: languageInfo(settings.sourceLanguage),
+    targetInfo: languageInfo(settings.targetLanguage),
   });
   const json = JSON.stringify(payload);
   if (json === lastOverlayPayload) return;

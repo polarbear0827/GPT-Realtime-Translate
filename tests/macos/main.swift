@@ -259,7 +259,9 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         let attributes = OverlayStyle.primaryAttributes(lang: "zh-Hant", size: 30)
         let sentences = ["第一句話。", "第二句話比較長一點。", "最新的第三句。"]
         let wide = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 1000, maxLines: 2)
-        check("fitter keeps every sentence that fits", wide == sentences.joined())
+        check("each phrase starts its own line; the newest that fit are kept", wide == "第二句話比較長一點。\n最新的第三句。", wide)
+        let three = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 1000, maxLines: 3)
+        check("three lines show three phrases", three == sentences.joined(separator: "\n"), three)
         let narrow = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 220, maxLines: 2)
         check("fitter drops the oldest sentences first", narrow.hasSuffix("最新的第三句。") && !narrow.hasPrefix("第一句"), narrow)
         let long = String(repeating: "很長的句子", count: 20) + "結尾。"

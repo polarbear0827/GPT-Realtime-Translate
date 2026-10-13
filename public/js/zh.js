@@ -5,6 +5,12 @@
 
 let converter = null;
 let loading = null;
+let version = 0;
+
+// Changes whenever the converter does, so cached conversions can be redone with OpenCC once it loads.
+export function zhConverterVersion() {
+  return version;
+}
 
 export function ensureZhConverter(src = "/vendor/opencc-cn2t.js") {
   if (converter) return Promise.resolve(true);
@@ -20,6 +26,7 @@ export function ensureZhConverter(src = "/vendor/opencc-cn2t.js") {
     script.onload = () => {
       try {
         converter = globalThis.OpenCC.Converter({ from: "cn", to: "twp" });
+        version += 1;
         resolve(true);
       } catch {
         resolve(false);
@@ -33,6 +40,7 @@ export function ensureZhConverter(src = "/vendor/opencc-cn2t.js") {
 
 export function setZhConverter(fn) {
   converter = fn;
+  version += 1;
 }
 
 export function toTraditional(text) {

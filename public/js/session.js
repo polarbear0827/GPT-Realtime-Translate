@@ -37,9 +37,9 @@ export class Cancelled extends Error {
 
 export class SessionController {
   // `deps` lets tests replace the network, microphone and timers.
-  // `feed` (optional) receives every sentence whether or not the transcript is recorded; audience
-  // sharing publishes from it.
-  constructor({ store, feed, liveSource, liveTranslation, isRecording, languageInfo, onChange, onCaptions, onNotice, onLevel }, deps = {}) {
+  // `feed` (optional) receives every phrase whether or not the transcript is recorded: the live
+  // captions, the floating captions and audience sharing are drawn from it.
+  constructor({ store, feed, isRecording, languageInfo, onChange, onCaptions, onNotice, onLevel }, deps = {}) {
     this.api = deps.api ?? defaultApi;
     this.AudioInput = deps.AudioInput ?? AudioInput;
     this.SystemAudioInput = deps.SystemAudioInput ?? SystemAudioInput;
@@ -49,8 +49,6 @@ export class SessionController {
     this.delay = deps.delay ?? defaultDelay;
     this.store = store;
     this.feed = feed ?? null;
-    this.liveSource = liveSource;
-    this.liveTranslation = liveTranslation;
     this.isRecording = isRecording;
     this.languageInfo = languageInfo;
     this.onChange = onChange;
@@ -83,17 +81,15 @@ export class SessionController {
     if (run.cancelled) throw new Cancelled();
   }
 
-  rel(perf) {
-    return this.store.relative(perf);
-  }
-
-  // Writes to the transcript (when recording) and to the sharing feed.
+  // Writes to the transcript (when recording) and to the live feed. Each store has its own timeline;
+  // `rel` converts a performance.now() time to it.
   record(fn) {
-    if (this.isRecording()) {
-      this.store.ensureEpoch(performance.now());
-      fn(this.store);
+    const now = performance.now();
+    for (const store of [this.isRecording() ? this.store : null, this.feed]) {
+      if (!store) continue;
+      store.ensureEpoch(now);
+      fn(store, (perf) => store.relative(perf));
     }
-    if (this.feed) fn(this.feed);
   }
 
   eachStore(fn) {
@@ -141,8 +137,6 @@ export class SessionController {
     };
     this.run = run;
     this.connections = { transcribe: needTranscribe ? "connecting" : "off", translate: needTranslate ? "connecting" : "off" };
-    this.liveSource.clear();
-    this.liveTranslation.clear();
     this.onCaptions();
     this.setStatus("starting", "取得麥克風與連線權杖");
 
@@ -450,12 +444,11 @@ export class SessionController {
         run.deltaSinceCommit = true;
         run.lastDeltaAt = performance.now();
         if (!run.itemStarts.has(event.itemId)) run.itemStarts.set(event.itemId, run.turn?.startPerf ?? performance.now() - 1500);
-        this.liveSource.appendItem(event.itemId, event.delta);
-        this.record((store) =>
+        this.record((store, rel) =>
           store.upsertItem(event.itemId, {
             track: "source",
             language,
-            startMs: this.rel(run.itemStarts.get(event.itemId)),
+            startMs: rel(run.itemStarts.get(event.itemId)),
             delta: event.delta,
           }),
         );
@@ -467,21 +460,20 @@ export class SessionController {
         const start = event.turn.startPerf;
         run.itemStarts.set(event.itemId, start);
         run.itemEnds.set(event.itemId, event.turn.endPerf);
-        this.record((store) => {
-          if (store.byItem.has(event.itemId)) store.upsertItem(event.itemId, { startMs: this.rel(start), endMs: this.rel(event.turn.endPerf) });
+        this.record((store, rel) => {
+          if (store.byItem.has(event.itemId)) store.upsertItem(event.itemId, { startMs: rel(start), endMs: rel(event.turn.endPerf) });
         });
         break;
       }
       case "completed": {
         const start = run.itemStarts.get(event.itemId) ?? performance.now() - 2000;
         const end = run.itemEnds.get(event.itemId) ?? performance.now() - 800;
-        this.liveSource.setItem(event.itemId, event.transcript);
-        this.record((store) =>
+        this.record((store, rel) =>
           store.upsertItem(event.itemId, {
             track: "source",
             language,
-            startMs: this.rel(start),
-            endMs: this.rel(Math.max(end, start + 300)),
+            startMs: rel(start),
+            endMs: rel(Math.max(end, start + 300)),
             transcript: event.transcript,
           }),
         );
@@ -506,28 +498,26 @@ export class SessionController {
     const now = performance.now();
     if (event.type === "output-delta") {
       const language = run.options.targetLanguage;
-      this.liveTranslation.append(event.delta);
       run.streamTouched.set("translation", now);
-      this.record((store) =>
+      this.record((store, rel) =>
         store.appendStream("translation", {
           track: "translation",
           language,
           delta: event.delta,
-          atMs: this.rel(now - run.options.translationLatencyMs),
+          atMs: rel(now - run.options.translationLatencyMs),
           cjk: this.languageInfo(language).cjk,
         }),
       );
       this.onCaptions();
     } else if (event.type === "input-delta" && run.sourceFromTranslate) {
       const language = run.options.sourceLanguage;
-      this.liveSource.append(event.delta);
       run.streamTouched.set("source", now);
-      this.record((store) =>
+      this.record((store, rel) =>
         store.appendStream("source", {
           track: "source",
           language,
           delta: event.delta,
-          atMs: this.rel(now - SOURCE_STREAM_LATENCY_MS),
+          atMs: rel(now - SOURCE_STREAM_LATENCY_MS),
           cjk: this.languageInfo(language).cjk,
         }),
       );

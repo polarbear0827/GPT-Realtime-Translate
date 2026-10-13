@@ -25,16 +25,16 @@ struct OverlayLine: Equatable {
     var isEmpty: Bool { sentences.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
 }
 
-/// Chooses what fits: the longest run of trailing whole sentences within `maxLines`; when even the last
-/// sentence is too long, its end prefixed with "…" (subtitles show the newest words, never cut the end).
+/// Chooses what fits: the longest run of trailing phrases within `maxLines`, each starting on its own
+/// line; when even the last phrase is too long, its end prefixed with "…" (subtitles show the newest
+/// words, never cut the end).
 enum OverlayTextFitter {
     static func fit(_ sentences: [String], cjk: Bool, attributes: [NSAttributedString.Key: Any], width: CGFloat, maxLines: Int) -> String {
         let clean = sentences.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         guard let last = clean.last, width > 20 else { return "" }
         let limit = lineHeight(attributes) * CGFloat(maxLines) + 1
-        let separator = cjk ? "" : " "
         for count in stride(from: clean.count, through: 1, by: -1) {
-            let text = clean.suffix(count).joined(separator: separator)
+            let text = clean.suffix(count).joined(separator: "\n")
             if height(text, attributes, width) <= limit { return text }
         }
         let characters = Array(last)

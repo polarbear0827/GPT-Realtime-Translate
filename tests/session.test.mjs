@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { LiveTrack } from "../public/js/captions.js";
 import { SessionController } from "../public/js/session.js";
 import { TranscriptStore } from "../public/js/transcript.js";
 
@@ -106,8 +105,6 @@ function setup(overrides = {}, { feed, recording = true } = {}) {
     {
       store,
       feed,
-      liveSource: new LiveTrack(),
-      liveTranslation: new LiveTrack(),
       isRecording: () => recording,
       languageInfo: (code) => ({ cjk: code === "zh" }),
       onChange: () => {},

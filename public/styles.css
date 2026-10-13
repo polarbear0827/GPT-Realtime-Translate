@@ -628,6 +628,28 @@ textarea {
   color: var(--pane-text, var(--caption-emphasis-text));
 }
 
+/* One phrase per line: the newest at the bottom, earlier ones dimmer. */
+.caption-line {
+  display: block;
+}
+
+.caption-line + .caption-line {
+  margin-top: 0.14em;
+}
+
+.caption-line:not(:last-child) {
+  opacity: 0.5;
+}
+
+.caption-line:nth-last-child(2) {
+  opacity: 0.72;
+}
+
+/* Keying out a green background needs solid text. */
+body[data-background="green"] .caption-line {
+  opacity: 1;
+}
+
 .caption-text .placeholder {
   color: var(--pane-faint, var(--faint));
   font-weight: 600;

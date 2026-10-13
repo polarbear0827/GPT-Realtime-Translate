@@ -1,61 +1,45 @@
-// Live caption buffers and their on-screen rendering.
-// Raw text is kept as received; Chinese conversion runs on the visible tail at render time, and
-// rendering is batched to one update per animation frame no matter how many deltas arrive.
+// Live captions as lines. Each phrase of the live transcript (an entry, see transcript.js) is shown on
+// its own line, split further at sentence ends; the newest line is at the bottom and older lines fade.
+// Chinese is converted per phrase at render time, never per streaming delta.
 
-import { joinText, tailText } from "./text.js";
-import { displayText } from "./zh.js";
+import { splitSentences } from "./text.js";
+import { displayText, zhConverterVersion } from "./zh.js";
 
-const LIVE_CHAR_LIMIT = 4000;
-const DISPLAY_CHAR_LIMIT = 900;
+export const CAPTION_LINES = 12;
 
-export class LiveTrack {
-  constructor() {
-    this.clear();
+const converted = new WeakMap();
+
+function displayed(entry, display) {
+  const version = zhConverterVersion();
+  const cached = converted.get(entry);
+  if (cached && cached.raw === entry.text && cached.display === display && cached.version === version) return cached.text;
+  const text = display(entry.text, entry.language).trim();
+  converted.set(entry, { raw: entry.text, display, version, text });
+  return text;
+}
+
+// The newest `limit` lines of one track, oldest first. Entries before `from` (a sequence number,
+// see TranscriptStore) were cleared from the screen.
+export function captionLines(store, track, { from = 0, limit = CAPTION_LINES, display = displayText } = {}) {
+  const lines = [];
+  for (let index = store.entries.length - 1; index >= 0 && lines.length < limit; index -= 1) {
+    const entry = store.entries[index];
+    if (entry.seq < from) break;
+    if (entry.track !== track) continue;
+    const text = displayed(entry, display);
+    if (!text) continue;
+    const sentences = splitSentences(text);
+    for (let sentence = sentences.length - 1; sentence >= 0 && lines.length < limit; sentence -= 1) lines.push(sentences[sentence]);
   }
-
-  clear() {
-    this.items = new Map();
-    this.stream = "";
-  }
-
-  setItem(id, text) {
-    this.items.set(id, text);
-    this.prune();
-  }
-
-  appendItem(id, delta) {
-    this.items.set(id, (this.items.get(id) ?? "") + delta);
-    this.prune();
-  }
-
-  append(delta) {
-    this.stream += delta;
-    this.prune();
-  }
-
-  text(cjk) {
-    return joinText([...this.items.values(), this.stream], cjk);
-  }
-
-  prune() {
-    let total = this.stream.length;
-    for (const text of this.items.values()) total += text.length;
-    for (const key of this.items.keys()) {
-      if (total <= LIVE_CHAR_LIMIT || this.items.size <= 1) break;
-      total -= this.items.get(key).length;
-      this.items.delete(key);
-    }
-    if (this.stream.length > LIVE_CHAR_LIMIT) this.stream = this.stream.slice(-LIVE_CHAR_LIMIT);
-  }
+  return lines.reverse();
 }
 
 export class CaptionView {
   constructor(element, placeholder) {
     this.element = element;
-    this.content = document.createElement("span");
+    this.lines = [];
+    this.content = document.createElement("div");
     this.content.className = "caption-content";
-    this.textNode = document.createTextNode("");
-    this.content.append(this.textNode);
     this.placeholderElement = document.createElement("span");
     this.placeholderElement.className = "placeholder";
     this.element.replaceChildren(this.content, this.placeholderElement);
@@ -66,12 +50,20 @@ export class CaptionView {
     this.placeholderElement.textContent = text;
   }
 
-  // Returns the text that was rendered (also sent to the caption display window).
-  render(track, language, info) {
-    const text = displayText(tailText(track.text(info.cjk), DISPLAY_CHAR_LIMIT, info.cjk), language);
-    if (this.textNode.data !== text) this.textNode.data = text;
-    if (this.element.lang !== info.lang) this.element.lang = info.lang;
-    this.element.classList.toggle("is-empty", !text);
-    return text;
+  // One element per line, reused between renders.
+  render(lines, lang) {
+    this.lines = lines;
+    const nodes = this.content.children;
+    while (nodes.length > lines.length) this.content.lastElementChild.remove();
+    while (nodes.length < lines.length) {
+      const line = document.createElement("span");
+      line.className = "caption-line";
+      this.content.append(line);
+    }
+    lines.forEach((text, index) => {
+      if (nodes[index].textContent !== text) nodes[index].textContent = text;
+    });
+    if (this.element.lang !== lang) this.element.lang = lang;
+    this.element.classList.toggle("is-empty", lines.length === 0);
   }
 }
