@@ -1,5 +1,6 @@
 // Connections to the OpenAI Realtime API using short-lived client secrets.
-//   TranslateClient  – gpt-realtime-translate over WebRTC (/v1/realtime/translations/calls)
+//   TranslateClient  – gpt-realtime-translate over WebRTC (/v1/realtime/translations/calls); system audio
+//                      in the macOS app uses NativeTranslateClient (native-translate.js) instead
 //   TranscribeClient – gpt-live-transcribe over WebSocket, audio appended as PCM16, committed per turn
 
 const TRANSLATION_CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
@@ -7,6 +8,32 @@ const REALTIME_WS_URL = "wss://api.openai.com/v1/realtime";
 const CONNECT_TIMEOUT_MS = 15_000;
 const INTERRUPTED_GRACE_MS = 6_000;
 const DRAIN_TIMEOUT_MS = 4_000;
+
+// Routes a translation-session event (same names over WebRTC and WebSocket) to a client.
+export function dispatchTranslationEvent(client, data) {
+  let event;
+  try {
+    event = JSON.parse(String(data));
+  } catch {
+    return;
+  }
+  switch (event.type) {
+    case "session.output_transcript.delta":
+      if (typeof event.delta === "string") client.onEvent?.({ type: "output-delta", delta: event.delta });
+      break;
+    case "session.input_transcript.delta":
+      if (typeof event.delta === "string") client.onEvent?.({ type: "input-delta", delta: event.delta });
+      break;
+    case "session.closed":
+      client.resolveClosed?.();
+      break;
+    case "error":
+      client.onEvent?.({ type: "error", error: event.error || {} });
+      break;
+    default:
+      break;
+  }
+}
 
 export class TranslateClient {
   constructor({ track, playAudio = false, onEvent, onState }) {
@@ -22,7 +49,11 @@ export class TranslateClient {
   async connect(clientSecret, { audioEnabled = true } = {}) {
     const pc = new RTCPeerConnection();
     this.pc = pc;
-    this.transceiver = pc.addTransceiver(audioEnabled ? this.track : "audio", { direction: "sendrecv" });
+    // Same shape as OpenAI's reference client (addTrack with a stream); a muted transceiver is only
+    // used while a replacement session warms up before the 60-minute limit.
+    this.sender = audioEnabled
+      ? pc.addTrack(this.track, new MediaStream([this.track]))
+      : pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
     pc.ontrack = ({ streams, track }) => {
       this.audio.srcObject = streams[0] ?? new MediaStream([track]);
     };
@@ -34,32 +65,34 @@ export class TranslateClient {
       if (this.connected && !this.closing) this.onState?.("failed", "翻譯事件通道已中斷。");
     };
 
-    // Before the first "connected" state, failures reject connect(); afterwards they are reported
-    // through onState so the session controller can reconnect.
+    // Before the first connection, failures reject connect(); afterwards they are reported through
+    // onState so the session controller can reconnect. An open data channel also counts as connected.
+    let resolveConnected;
+    let rejectConnected;
     const connected = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("翻譯連線逾時。")), CONNECT_TIMEOUT_MS);
-      pc.onconnectionstatechange = () => {
-        const state = pc.connectionState;
-        if (state === "connected") {
-          clearTimeout(timer);
-          clearTimeout(this.interruptedTimer);
-          if (this.connected) this.onState?.("live");
-          resolve();
-        } else if (state === "disconnected" && this.connected) {
-          // Usually transient (network switch); only treat it as failed if it doesn't recover.
-          this.onState?.("interrupted");
-          clearTimeout(this.interruptedTimer);
-          this.interruptedTimer = setTimeout(() => {
-            if (pc.connectionState !== "connected" && !this.closing) this.onState?.("failed", "翻譯連線中斷。");
-          }, INTERRUPTED_GRACE_MS);
-        } else if (state === "failed") {
-          clearTimeout(timer);
-          reject(new Error("翻譯連線失敗。"));
-          if (this.connected && !this.closing) this.onState?.("failed", "翻譯連線失敗。");
-        }
-      };
+      resolveConnected = resolve;
+      rejectConnected = reject;
     });
     connected.catch(() => {});
+    channel.onopen = () => resolveConnected();
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === "connected") {
+        clearTimeout(this.interruptedTimer);
+        if (this.connected) this.onState?.("live");
+        resolveConnected();
+      } else if (state === "disconnected" && this.connected) {
+        // Usually transient (network switch); only treat it as failed if it doesn't recover.
+        this.onState?.("interrupted");
+        clearTimeout(this.interruptedTimer);
+        this.interruptedTimer = setTimeout(() => {
+          if (pc.connectionState !== "connected" && !this.closing) this.onState?.("failed", "翻譯連線中斷。");
+        }, INTERRUPTED_GRACE_MS);
+      } else if (state === "failed") {
+        rejectConnected(new Error("翻譯連線失敗（WebRTC 無法建立，可能是網路擋住 UDP）。"));
+        if (this.connected && !this.closing) this.onState?.("failed", "翻譯連線失敗。");
+      }
+    };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -67,42 +100,29 @@ export class TranslateClient {
       method: "POST",
       headers: { Authorization: `Bearer ${clientSecret}`, "Content-Type": "application/sdp" },
       body: offer.sdp,
-    });
+    }, 20_000);
     const answer = await response.text();
     if (!response.ok) throw new Error(apiErrorMessage(answer, "無法建立翻譯連線。"));
     await pc.setRemoteDescription({ type: "answer", sdp: answer });
-    await connected;
+    // ICE and DTLS only start now, so they get their own time budget (not shared with the SDP request).
+    const timer = setTimeout(() => {
+      rejectConnected(new Error(`翻譯連線逾時（WebRTC：${pc.iceConnectionState} / ${pc.connectionState}；可能是網路擋住 UDP）。`));
+    }, 20_000);
+    try {
+      await connected;
+    } finally {
+      clearTimeout(timer);
+    }
     this.connected = true;
     this.connectedAt = performance.now();
   }
 
   handleMessage(data) {
-    let event;
-    try {
-      event = JSON.parse(String(data));
-    } catch {
-      return;
-    }
-    switch (event.type) {
-      case "session.output_transcript.delta":
-        if (typeof event.delta === "string") this.onEvent?.({ type: "output-delta", delta: event.delta });
-        break;
-      case "session.input_transcript.delta":
-        if (typeof event.delta === "string") this.onEvent?.({ type: "input-delta", delta: event.delta });
-        break;
-      case "session.closed":
-        this.resolveClosed?.();
-        break;
-      case "error":
-        this.onEvent?.({ type: "error", error: event.error || {} });
-        break;
-      default:
-        break;
-    }
+    dispatchTranslationEvent(this, data);
   }
 
   setAudioEnabled(enabled) {
-    return this.transceiver?.sender.replaceTrack(enabled ? this.track : null).catch(() => {});
+    return this.sender?.replaceTrack(enabled ? this.track : null).catch(() => {});
   }
 
   setPlayAudio(play) {

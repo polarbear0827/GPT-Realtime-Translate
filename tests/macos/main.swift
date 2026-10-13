@@ -31,6 +31,9 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var systemAudioStarted = false
     private var overlay: [String: Any] = ["visible": false, "locked": false, "fontScale": 1.0]
     private var overlayUpdates: [(OverlayLine?, OverlayLine?)] = []
+    private var translationOpened: [String] = []
+    private var translationAudio: [String: Bool] = [:]
+    private var translationClosed: [String] = []
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
@@ -71,6 +74,18 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     func setLeaveGuard(enabled: Bool, message: String) { leaveGuardCalls += 1 }
     func openDisplayWindow() {}
     func setAppearance(_ theme: String) { appearance = theme }
+
+    // Translation socket is simulated: it "opens", then delivers one translated delta.
+    func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws {
+        guard body["targetLanguage"] as? String == "zh" else { throw BackendError(status: 400, message: "不支援的翻譯目標語言。") }
+        translationOpened.append(id)
+        let event = NativeBridge.json([id, "{\"type\":\"session.output_transcript.delta\",\"delta\":\"你好\"}"])
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+            self?.webView.evaluateJavaScript("window.__kltTranslationEvent&&window.__kltTranslationEvent(...\(event))")
+        }
+    }
+    func setTranslationAudio(id: String, enabled: Bool) { translationAudio[id] = enabled }
+    func closeTranslation(id: String, graceful: Bool) async { translationClosed.append(id) }
 
     // System audio is simulated: 10 chunks of a 440 Hz tone, delivered the way the app delivers them.
     var systemAudioSupported: Bool { true }
@@ -184,7 +199,21 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         await input.open({ muteSource: false });
         await new Promise((resolve) => setTimeout(resolve, 900));
         const track = input.track;
-        const result = { info, overlay, chunks, lastRms, trackKind: track?.kind, trackState: track?.readyState, contextRate: input.context?.sampleRate };
+        const { NativeTranslateClient } = await import("/js/native-translate.js");
+        const deltas = [];
+        const translator = new NativeTranslateClient({ targetLanguage: "zh", onEvent: (event) => deltas.push(event) });
+        await translator.connect(null, { audioEnabled: false });
+        await translator.setAudioEnabled(true);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await translator.close({ graceful: true });
+        let rejected = "";
+        try {
+          await new NativeTranslateClient({ targetLanguage: "xx" }).connect(null);
+        } catch (error) {
+          rejected = error.message;
+        }
+        const result = { info, overlay, chunks, lastRms, trackKind: track?.kind, trackState: track?.readyState, contextRate: input.context?.sampleRate,
+          supported: NativeTranslateClient.supported, deltas, translatorId: translator.id, rejected };
         input.close();
         return JSON.stringify(result);
         """
@@ -201,6 +230,13 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             check("system audio becomes a live WebRTC-ready track", result["trackKind"] as? String == "audio" && result["trackState"] as? String == "live",
                   "rate \(result["contextRate"] ?? "nil")")
             check("stop releases native capture", !systemAudioStarted)
+            let deltas = result["deltas"] as? [[String: Any]] ?? []
+            let translatorId = result["translatorId"] as? String ?? ""
+            check("native translation socket opens, streams events, closes",
+                  result["supported"] as? Bool == true && deltas.first?["delta"] as? String == "你好"
+                  && translationOpened.contains(translatorId) && translationAudio[translatorId] == true && translationClosed.contains(translatorId),
+                  "\(deltas)")
+            check("native translation errors reach the page", result["rejected"] as? String == "不支援的翻譯目標語言。", "\(result["rejected"] ?? "")")
         } catch {
             check("system audio / overlay script", false, "\(error)")
         }

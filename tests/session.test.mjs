@@ -10,6 +10,7 @@ let translates;
 let transcribes;
 let gates;
 let controllers = [];
+let secretRequests = { translation: 0, transcription: 0 };
 
 class FakeAudio {
   constructor({ onChunk, onEnded }) {
@@ -56,6 +57,12 @@ class FakeTranslate {
   }
 }
 
+class FakeNativeTranslate extends FakeTranslate {
+  static get supported() {
+    return true;
+  }
+}
+
 class FakeTranscribe {
   constructor(options) {
     Object.assign(this, options, { closed: null, appended: 0, commits: [] });
@@ -86,6 +93,7 @@ function setup(overrides = {}) {
   const notices = [];
   const api = {
     createTranslationSecret: async () => {
+      secretRequests.translation += 1;
       await gates.secrets;
       return "ek_translate";
     },
@@ -110,6 +118,7 @@ function setup(overrides = {}) {
       api,
       AudioInput: FakeAudio,
       SystemAudioInput: FakeSystemAudio,
+      NativeTranslateClient: FakeNativeTranslate,
       TranslateClient: FakeTranslate,
       TranscribeClient: FakeTranscribe,
       delay: async () => {},
@@ -144,6 +153,7 @@ afterEach(async () => {
 });
 
 beforeEach(() => {
+  secretRequests = { translation: 0, transcription: 0 };
   audios = [];
   translates = [];
   transcribes = [];
@@ -303,5 +313,27 @@ test("system audio with signal does not warn", async () => {
   controller.run.liveSince -= 6000;
   controller.tick(controller.run);
   assert.ok(!notices.some((notice) => notice.level === "system-audio-silent"));
+  await controller.stop();
+});
+
+test("system audio translates over the app's own WebSocket (no WebRTC, no client secret)", async () => {
+  const { controller } = setup();
+  await controller.start(options("translation", { audioSource: "system" }));
+  assert.ok(translates[0] instanceof FakeNativeTranslate);
+  assert.equal(translates[0].targetLanguage, "zh");
+  assert.equal(secretRequests.translation, 0);
+  translates[0].onState("failed", "socket closed");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(translates[1] instanceof FakeNativeTranslate, "reconnects with the native client too");
+  assert.equal(secretRequests.translation, 0);
+  await controller.stop();
+});
+
+test("microphone keeps using WebRTC translation", async () => {
+  const { controller } = setup();
+  await controller.start(options("translation"));
+  assert.ok(!(translates[0] instanceof FakeNativeTranslate));
+  assert.equal(secretRequests.translation, 1);
   await controller.stop();
 });

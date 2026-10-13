@@ -18,6 +18,9 @@ protocol BridgeHost: AnyObject {
     func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any]
     func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?)
     func setAppearance(_ theme: String)
+    func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws
+    func setTranslationAudio(id: String, enabled: Bool)
+    func closeTranslation(id: String, graceful: Bool) async
 }
 
 // window.webkit.messageHandlers.klt — the page's only way to reach native code. Messages are
@@ -58,6 +61,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                     "nativeSave": true,
                     "displayWindow": true,
                     "systemAudio": host.systemAudioSupported,
+                    "nativeTranslation": true,
                     "overlay": true,
                 ],
                 "rememberKeyLabel": "記住金鑰（存在 macOS 鑰匙圈）",
@@ -103,6 +107,27 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                 locked: body["locked"] as? Bool,
                 fontScale: body["fontScale"] as? Double
             ))
+        case "translationOpen":
+            let id = body["id"] as? String ?? ""
+            let audioEnabled = body["audioEnabled"] as? Bool ?? true
+            Task { @MainActor in
+                do {
+                    try await host.openTranslation(id: id, body: body, audioEnabled: audioEnabled)
+                    reply(["ok": true])
+                } catch {
+                    replyHandler(nil, (error as? BackendError)?.message ?? error.localizedDescription)
+                }
+            }
+        case "translationAudio":
+            host.setTranslationAudio(id: body["id"] as? String ?? "", enabled: body["enabled"] as? Bool ?? false)
+            reply(["ok": true])
+        case "translationClose":
+            let id = body["id"] as? String ?? ""
+            let graceful = body["graceful"] as? Bool ?? true
+            Task { @MainActor in
+                await host.closeTranslation(id: id, graceful: graceful)
+                reply(["ok": true])
+            }
         case "setAppearance":
             host.setAppearance(body["theme"] as? String ?? "system")
             reply(["ok": true])

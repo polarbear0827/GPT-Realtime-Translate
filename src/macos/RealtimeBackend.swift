@@ -239,6 +239,19 @@ final class RealtimeBackend {
         }
     }
 
+    /// A translation WebSocket authenticated with the API key (system audio goes straight from the app to it).
+    func makeTranslationSocket(id: String, body: [String: Any], audioEnabled: Bool) throws -> TranslationSocket {
+        guard let apiKey else { throw BackendError(status: 401, message: "尚未設定 API key。") }
+        let params = try rules.validateTranslation(body)
+        return TranslationSocket(
+            id: id,
+            apiKey: apiKey,
+            model: rules.config.models.translation,
+            targetLanguage: params.targetLanguage,
+            audioEnabled: audioEnabled
+        )
+    }
+
     private func createClientSecret(endpoint: String, payload: [String: Any]) async throws -> (Int, Any) {
         guard let apiKey else { throw BackendError(status: 401, message: "尚未設定 API key。") }
         var request = URLRequest(url: URL(string: endpoint)!)

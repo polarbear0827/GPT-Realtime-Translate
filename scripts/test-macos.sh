@@ -14,6 +14,7 @@ xcrun swiftc \
   "$ROOT_DIR/src/macos/NativeBridge.swift" \
   "$ROOT_DIR/src/macos/CaptionOverlay.swift" \
   "$ROOT_DIR/src/macos/SystemAudioCapture.swift" \
+  "$ROOT_DIR/src/macos/TranslationSocket.swift" \
   "$ROOT_DIR/tests/macos/main.swift" \
   -framework AppKit -framework WebKit -o "$WORK_DIR/bridge-harness"
 "$WORK_DIR/bridge-harness" "$ROOT_DIR/public"

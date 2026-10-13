@@ -8,7 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var webView: WKWebView!
     private var displayWindow: NSWindow?
     private var server: StaticServer!
+    private var backend: RealtimeBackend!
     private var bridge: NativeBridge!
+    private var translationSockets: [String: TranslationSocket] = [:]
     private var activity: NSObjectProtocol?
     private var systemAudio: AnyObject?
     private var overlayMenuItem: NSMenuItem?
@@ -42,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             showFatalError("找不到 App 內的網頁資源，請重新安裝。")
             return
         }
-        let backend = RealtimeBackend(config: config, version: version)
+        backend = RealtimeBackend(config: config, version: version)
         bridge = NativeBridge(backend: backend, version: version)
         bridge.host = self
         createMainWindow()
@@ -75,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     func applicationWillTerminate(_ notification: Notification) {
         stopSystemAudio()
+        translationSockets.values.forEach { socket in Task { await socket.close(graceful: false) } }
         setKeepAwake(false)
         server?.stop()
     }
@@ -96,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         view.navigationDelegate = self
         view.uiDelegate = self
         view.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 13.3, *) {
+            // Lets Safari's Web Inspector (Develop menu) attach for troubleshooting.
+            view.isInspectable = true
+        }
         return view
     }
 
@@ -241,8 +248,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         stopSystemAudio()
         let capture = SystemAudioCapture()
         capture.onChunk = { [weak self] data, rms, peak in
-            let script = "window.__kltSystemAudio&&window.__kltSystemAudio('\(data.base64EncodedString())',\(rms),\(peak))"
-            DispatchQueue.main.async { self?.webView.evaluateJavaScript(script) }
+            let base64 = data.base64EncodedString()
+            let script = "window.__kltSystemAudio&&window.__kltSystemAudio('\(base64)',\(rms),\(peak))"
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Translation gets the audio directly; the page gets it for transcription, VAD and the meter.
+                for socket in self.translationSockets.values { socket.append(base64) }
+                self.webView.evaluateJavaScript(script)
+            }
         }
         capture.onFailure = { [weak self] message in
             let payload = NativeBridge.json(["message": message])
@@ -257,6 +270,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             (systemAudio as? SystemAudioCapture)?.stop()
         }
         systemAudio = nil
+    }
+
+    func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws {
+        let socket = try backend.makeTranslationSocket(id: id, body: body, audioEnabled: audioEnabled)
+        socket.onEvent = { [weak self] text in
+            self?.webView.evaluateJavaScript("window.__kltTranslationEvent&&window.__kltTranslationEvent(...\(NativeBridge.json([id, text])))")
+        }
+        socket.onClosed = { [weak self] reason in
+            self?.translationSockets[id] = nil
+            self?.webView.evaluateJavaScript("window.__kltTranslationClosed&&window.__kltTranslationClosed(...\(NativeBridge.json([id, reason])))")
+        }
+        translationSockets[id] = socket
+        do {
+            try await socket.open()
+        } catch {
+            translationSockets[id] = nil
+            throw error
+        }
+    }
+
+    func setTranslationAudio(id: String, enabled: Bool) {
+        translationSockets[id]?.audioEnabled = enabled
+    }
+
+    func closeTranslation(id: String, graceful: Bool) async {
+        guard let socket = translationSockets[id] else { return }
+        await socket.close(graceful: graceful)
+        translationSockets[id] = nil
     }
 
     var overlayState: [String: Any] {

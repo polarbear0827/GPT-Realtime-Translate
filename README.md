@@ -13,7 +13,7 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 
 ## Current Version
 
-`0.5.0` — see [CHANGELOG.md](CHANGELOG.md).
+`0.5.1` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Realtime flow:
    close it. ⌘⇧O shows/hides it and ⌘⇧L locks/unlocks it from the app's View menu.
 
 The audio is captured digitally with a Core Audio process tap, so it works with headphones and with
-the speakers off. Optionally enable 設定 > 收音 > 把原本的聲音靜音 to silence the original while
+the speakers off. The app streams it to gpt-realtime-translate over its own WebSocket (no WebRTC). Optionally enable 設定 > 收音 > 把原本的聲音靜音 to silence the original while
 reading. The first time, macOS asks to allow "System Audio Recording"; if captions stay empty, enable
 it under System Settings > Privacy & Security > Screen & System Audio Recording and reopen the app.
 

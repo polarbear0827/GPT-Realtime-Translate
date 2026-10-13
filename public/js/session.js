@@ -7,6 +7,7 @@
 
 import * as defaultApi from "./api.js";
 import { AudioInput, CHUNK_MS } from "./audio.js";
+import { NativeTranslateClient } from "./native-translate.js";
 import { TranscribeClient, TranslateClient, delay as defaultDelay } from "./realtime.js";
 import { SystemAudioInput } from "./system-audio.js";
 import { VoiceActivityDetector } from "./vad.js";
@@ -40,6 +41,7 @@ export class SessionController {
     this.api = deps.api ?? defaultApi;
     this.AudioInput = deps.AudioInput ?? AudioInput;
     this.SystemAudioInput = deps.SystemAudioInput ?? SystemAudioInput;
+    this.NativeTranslateClient = deps.NativeTranslateClient ?? NativeTranslateClient;
     this.TranslateClient = deps.TranslateClient ?? TranslateClient;
     this.TranscribeClient = deps.TranscribeClient ?? TranscribeClient;
     this.delay = deps.delay ?? defaultDelay;
@@ -97,6 +99,8 @@ export class SessionController {
       // Translated speech playing on this Mac would be captured again as system audio.
       options: systemAudio ? { ...options, playAudio: false } : options,
       systemAudio,
+      // System audio is already in the app: translate it over the app's own WebSocket (no WebRTC).
+      nativeTranslate: systemAudio && this.NativeTranslateClient.supported,
       sawSignal: false,
       signalWarned: false,
       needTranslate,
@@ -139,7 +143,7 @@ export class SessionController {
       });
       const [, translateSecret, transcribeSecret] = await Promise.all([
         run.audio.open({ deviceId: options.deviceId, processing: options.micProcessing, muteSource: options.muteSystemAudio }),
-        needTranslate ? this.api.createTranslationSecret(translationParams(options)) : null,
+        needTranslate ? this.translationSecret(run) : null,
         needTranscribe ? this.api.createTranscriptionSecret(transcriptionParams(options)) : null,
       ]);
       this.check(run);
@@ -206,10 +210,17 @@ export class SessionController {
 
   // ---- connections -------------------------------------------------------------------------
 
+  // The native WebSocket client authenticates with the app's key and needs no client secret.
+  translationSecret(run) {
+    return run.nativeTranslate ? Promise.resolve(null) : this.api.createTranslationSecret(translationParams(run.options));
+  }
+
   createTranslateClient(run) {
-    const client = new this.TranslateClient({
+    const Client = run.nativeTranslate ? this.NativeTranslateClient : this.TranslateClient;
+    const client = new Client({
       track: run.audio.track,
       playAudio: run.options.playAudio,
+      targetLanguage: run.options.targetLanguage,
       onEvent: (event) => this.handleTranslateEvent(run, event),
       onState: (state, message) => {
         if (run !== this.run || run.cancelled || client !== run.translate) return;
@@ -282,7 +293,7 @@ export class SessionController {
     this.onNotice("warning", `${LABELS[name]}連線中斷，正在自動重新連線…${reason ? `（${reason}）` : ""}`);
     for (let attempt = 0; !run.cancelled; attempt += 1) {
       try {
-        if (name === "translate") await this.attachTranslate(run, await this.api.createTranslationSecret(translationParams(run.options)));
+        if (name === "translate") await this.attachTranslate(run, await this.translationSecret(run));
         else await this.attachTranscribe(run, await this.api.createTranscriptionSecret(transcriptionParams(run.options)));
         this.onNotice("success", `${LABELS[name]}連線已恢復。`);
         break;
@@ -300,7 +311,7 @@ export class SessionController {
   async rotateTranslate(run) {
     run.rotating.translate = true;
     try {
-      const secret = await this.api.createTranslationSecret(translationParams(run.options));
+      const secret = await this.translationSecret(run);
       this.check(run);
       const next = this.createTranslateClient(run);
       try {

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.1 - 2026-10-13
+
+- Fixed "翻譯連線逾時" when translating system audio: the app now streams the captured audio to
+  gpt-realtime-translate over its own WebSocket (authenticated with your key) instead of WebRTC, so
+  it works on any network where the transcription connection works.
+- Microphone mode (WebRTC): the connection timeout no longer includes the time OpenAI takes to answer,
+  an open event channel counts as connected, and a timeout now reports the WebRTC state.
+- The macOS app's page can be inspected with Safari's Web Inspector for troubleshooting.
+
 ## v0.5.0 - 2026-10-12
 
 ### Translate what your Mac is playing
