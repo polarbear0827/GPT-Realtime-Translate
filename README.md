@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/polarbear0827/GPT-Realtime-Translate/releases/latest"><img src="https://img.shields.io/github/v/release/polarbear0827/GPT-Realtime-Translate?label=%E4%B8%8B%E8%BC%89&color=48c6a8" alt="最新版本" /></a>
-  <a href="https://github.com/polarbear0827/GPT-Realtime-Translate/actions/workflows/ci.yml"><img src="https://github.com/polarbear0827/GPT-Realtime-Translate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest"><img src="https://img.shields.io/github/v/release/polarbear0827/Keynote-Live-Translator?label=%E4%B8%8B%E8%BC%89&color=48c6a8" alt="最新版本" /></a>
+  <a href="https://github.com/polarbear0827/Keynote-Live-Translator/actions/workflows/ci.yml"><img src="https://github.com/polarbear0827/Keynote-Live-Translator/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/macOS-12.3%2B-111?logo=apple" alt="macOS 12.3 以上" />
   <img src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555" alt="Universal" />
 </p>
@@ -93,7 +93,7 @@
 
 ## 快速開始
 
-1. 到 [Releases](https://github.com/polarbear0827/GPT-Realtime-Translate/releases/latest) 下載 `KeynoteLiveTranslator-<版本>.pkg` 並安裝（macOS 12.3 以上；擷取電腦聲音需要 macOS 14.2 以上）。
+1. 到 [Releases](https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest) 下載 `KeynoteLiveTranslator-<版本>.pkg` 並安裝（macOS 12.3 以上；擷取電腦聲音需要 macOS 14.2 以上）。
 2. 開啟 App，輸入 OpenAI API key。金鑰會立刻驗證，並檢查兩個模型的使用權限；勾選「記住金鑰」才會存進 macOS 鑰匙圈。
 3. 選擇模式與語言，到「設定 > 收音 > 測試麥克風」確認音量。可加上講者姓名、產品名稱等**關鍵字**與一句**情境說明**，提高專有名詞的準確度。
 4. 按「開始」（或空白鍵）。

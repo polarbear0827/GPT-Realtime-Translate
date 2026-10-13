@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/polarbear0827/GPT-Realtime-Translate/releases/latest"><img src="https://img.shields.io/github/v/release/polarbear0827/GPT-Realtime-Translate?label=download&color=48c6a8" alt="Latest release" /></a>
-  <a href="https://github.com/polarbear0827/GPT-Realtime-Translate/actions/workflows/ci.yml"><img src="https://github.com/polarbear0827/GPT-Realtime-Translate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest"><img src="https://img.shields.io/github/v/release/polarbear0827/Keynote-Live-Translator?label=download&color=48c6a8" alt="Latest release" /></a>
+  <a href="https://github.com/polarbear0827/Keynote-Live-Translator/actions/workflows/ci.yml"><img src="https://github.com/polarbear0827/Keynote-Live-Translator/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/macOS-12.3%2B-111?logo=apple" alt="macOS 12.3 or later" />
   <img src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555" alt="Universal" />
 </p>
@@ -96,7 +96,7 @@ Choose the audio source "電腦播放的聲音" (what the Mac is playing): the a
 
 ## Quick start
 
-1. Download `KeynoteLiveTranslator-<version>.pkg` from [Releases](https://github.com/polarbear0827/GPT-Realtime-Translate/releases/latest) and install it (macOS 12.3 or later; capturing what the Mac plays needs macOS 14.2 or later).
+1. Download `KeynoteLiveTranslator-<version>.pkg` from [Releases](https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest) and install it (macOS 12.3 or later; capturing what the Mac plays needs macOS 14.2 or later).
 2. Open the app and enter your OpenAI API key. It's verified right away, including access to both models; it's stored in the macOS Keychain only if you tick "記住金鑰" (remember key).
 3. Pick the mode and languages, and check the input level in 設定 > 收音 > 測試麥克風 (Settings > Audio > Test microphone). Add **keywords** (speaker and product names, jargon) and a one-line **context** to improve accuracy.
 4. Press 開始 (Start), or Space.

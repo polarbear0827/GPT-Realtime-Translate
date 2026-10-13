@@ -2,7 +2,7 @@
 
 **第一個正式版。** 演講、會議、影片的即時字幕與翻譯，還能讓全場觀眾用自己的手機同步看。
 
-![Keynote Live Translator](https://raw.githubusercontent.com/polarbear0827/GPT-Realtime-Translate/v1.0.0/docs/images/hero.png)
+![Keynote Live Translator](https://raw.githubusercontent.com/polarbear0827/Keynote-Live-Translator/v1.0.0/docs/images/hero.png)
 
 ## 重點功能
 
@@ -18,6 +18,6 @@
 
 下載 `KeynoteLiveTranslator-1.0.0.pkg` 並安裝（macOS 12.3 以上，Apple silicon 與 Intel 皆可；擷取電腦聲音需要 macOS 14.2 以上）。
 
-要讓觀眾用手機看：在專案資料夾執行 `npm run relay:deploy`，部署完成後在 App 按「連接」。詳細說明請看 [README](https://github.com/polarbear0827/GPT-Realtime-Translate#分享給觀眾)。
+要讓觀眾用手機看：在專案資料夾執行 `npm run relay:deploy`，部署完成後在 App 按「連接」。詳細說明請看 [README](https://github.com/polarbear0827/Keynote-Live-Translator#分享給觀眾)。
 
 已經部署過分享伺服器的話，不需要重新部署。
