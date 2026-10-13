@@ -41,9 +41,11 @@ jobs:
         run: npm ci --prefix relay --no-audit --no-fund
 
       - name: Relay end-to-end tests (wrangler dev)
+        timeout-minutes: 5
         run: npm run relay:test
 
       - name: Load test (300 simulated viewers)
+        timeout-minutes: 5
         run: npm run relay:load-test -- --viewers 300 --seconds 10 --ramp 3
 
   macos:

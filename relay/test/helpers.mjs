@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 export const TEST_PUBLISH_KEY = "kltp_test_0123456789abcdefghijklmnopqrstuvwxyzABCD";
 const relayDir = fileURLToPath(new URL("..", import.meta.url));
+const wranglerBin = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
 
 async function freePort() {
   return new Promise((resolve, reject) => {
@@ -25,14 +26,45 @@ export async function startRelay() {
     return { url: process.env.RELAY_URL.replace(/\/$/, ""), key: process.env.RELAY_KEY ?? TEST_PUBLISH_KEY, stop: async () => {} };
   }
   const port = await freePort();
+  // Its own process group, so stopping it also stops workerd (on Linux, killing only the parent leaves
+  // workerd holding the output pipes and the test process never exits).
   const child = spawn(
-    "npx",
-    ["wrangler", "dev", "--port", String(port), "--ip", "127.0.0.1", "--var", `PUBLISH_KEY:${TEST_PUBLISH_KEY}`, "--persist-to", `.wrangler/test-${port}`],
-    { cwd: relayDir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" } },
+    process.execPath,
+    [wranglerBin, "dev", "--port", String(port), "--ip", "127.0.0.1", "--var", `PUBLISH_KEY:${TEST_PUBLISH_KEY}`, "--persist-to", `.wrangler/test-${port}`],
+    { cwd: relayDir, stdio: ["ignore", "pipe", "pipe"], detached: true, env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" } },
   );
   let log = "";
   child.stdout.on("data", (chunk) => (log += chunk));
   child.stderr.on("data", (chunk) => (log += chunk));
+  const killGroup = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      // Already gone.
+    }
+  };
+  const stop = () =>
+    new Promise((resolve) => {
+      const done = () => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolve();
+      };
+      if (child.exitCode !== null || child.signalCode !== null) {
+        killGroup("SIGKILL");
+        done();
+        return;
+      }
+      child.once("exit", () => {
+        killGroup("SIGKILL");
+        done();
+      });
+      killGroup("SIGINT");
+      setTimeout(() => {
+        killGroup("SIGKILL");
+        done();
+      }, 5000).unref();
+    });
   const url = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -46,19 +78,10 @@ export async function startRelay() {
     await sleep(300);
   }
   if (Date.now() >= deadline) {
-    child.kill();
+    await stop();
     throw new Error(`wrangler dev did not start:\n${log}`);
   }
-  return {
-    url,
-    key: TEST_PUBLISH_KEY,
-    stop: () =>
-      new Promise((resolve) => {
-        child.once("exit", resolve);
-        child.kill("SIGINT");
-        setTimeout(() => child.kill("SIGKILL"), 5000).unref();
-      }),
-  };
+  return { url, key: TEST_PUBLISH_KEY, stop };
 }
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
