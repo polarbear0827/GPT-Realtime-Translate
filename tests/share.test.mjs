@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { SharePublisher, buildMeta } from "../public/js/share.js";
+import { SharePublisher, buildMeta, flushInterval } from "../public/js/share.js";
 import { TranscriptStore } from "../public/js/transcript.js";
 
 const LANGUAGES = {
@@ -309,4 +309,23 @@ test("buildMeta describes the languages for viewers", () => {
     target: { label: "繁體中文", lang: "zh-Hant", cjk: true },
   });
   assert.equal(buildMeta({ mode: "source", sourceLanguage: "en", targetLanguage: "zh", original: true, languageInfo }).original, false);
+});
+
+test("large audiences get fewer, larger updates", () => {
+  assert.equal(flushInterval(0), 250);
+  assert.equal(flushInterval(400), 250);
+  assert.equal(flushInterval(401), 500);
+  assert.equal(flushInterval(1500), 500);
+  assert.equal(flushInterval(1501), 1000);
+
+  const socket = connect(setup());
+  socket.receive({ t: "viewers", n: 1000 });
+  socket.sent = [];
+  translate("大");
+  clock.advance(250);
+  assert.equal(socket.take("up").length, 0);
+  translate("家好");
+  clock.advance(250);
+  const [up] = socket.take("up");
+  assert.equal(up.e[0].x, "大家好", "both changes in one update");
 });

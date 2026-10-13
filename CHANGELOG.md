@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.1 - 2026-10-13
+
+- Sharing adapts its update rate to the audience size (4 updates per second up to 400 viewers, 2 up to
+  1,500, then 1). Measured on Cloudflare: with 1,000 viewers every update now arrives within the
+  network round trip (95% within 0.35 s), where 4 updates per second had queued up to several seconds.
+- `npm run relay:deploy` no longer stops to ask about updating Wrangler's AI-agent "skills".
+- Load test: the host's update rate follows the app by default (`--rate auto`); `--pad` adds text to
+  each update to tell bandwidth limits from message-count limits.
+- CI: the relay tests stop wrangler cleanly on Linux.
+
 ## v0.6.0 - 2026-10-13
 
 ### Share the translation with the audience

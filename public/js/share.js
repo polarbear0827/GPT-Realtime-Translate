@@ -6,7 +6,13 @@
 // Privacy rules: nothing said before sharing started is sent, sentences that begin while sharing is
 // paused are never sent, and the original text is only sent when the host allows viewers to see it.
 
-const FLUSH_MS = 250;
+// One relay room fans every update out to every viewer; measured on Cloudflare, about 2,000 viewer
+// messages per second stays fast and 4,000 starts to queue. Larger audiences get fewer, larger updates.
+export function flushInterval(viewers) {
+  if (viewers > 1500) return 1000;
+  if (viewers > 400) return 500;
+  return 250;
+}
 const HEARTBEAT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 const END_TIMEOUT_MS = 4_000;
@@ -327,7 +333,7 @@ export class SharePublisher {
       return;
     }
     this.dirty.add(id);
-    if (!this.flushTimer) this.flushTimer = this.setTimeout(() => this.flush(), FLUSH_MS);
+    if (!this.flushTimer) this.flushTimer = this.setTimeout(() => this.flush(), flushInterval(this.viewers));
   }
 
   wants(entry) {

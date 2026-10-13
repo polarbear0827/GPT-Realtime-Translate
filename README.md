@@ -9,14 +9,14 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 - Translate what the Mac is playing (YouTube, meetings) without speakers, shown as floating captions
   over any app, including full-screen video (macOS 14.2+).
 - Share the captions with the audience: people scan a QR code and read the translation live on their
-  own phones (no app to install, view only). Runs on your own free Cloudflare relay; tested with
-  2,000 simulated viewers.
+  own phones (no app to install, view only). Runs on your own free Cloudflare relay; load-tested on
+  Cloudflare with 1,000 simulated viewers (every update delivered, 95% within 0.35 s).
 - Light and dark appearance (follows the system by default).
 - macOS app (universal, ~2 MB), plus a browser version for development.
 
 ## Current Version
 
-`0.6.0` — see [CHANGELOG.md](CHANGELOG.md).
+`0.6.1` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -122,7 +122,13 @@ Let everyone in the room read the translation on their own phone by scanning a Q
    the share; reopening within 12 hours offers to continue the same room, so nobody has to rescan.
 
 The free Cloudflare plan is enough for typical events (an hour-long talk with 1,000 viewers uses a
-small part of the daily allowance). To test the relay at scale:
+small part of the daily allowance).
+
+Capacity, measured on Cloudflare with simulated viewers (from one Mac): up to about 1,000 viewers every
+update arrives within the network round trip (95% within 0.35 s). The app sends fewer, larger updates
+as the audience grows (4 per second up to 400 viewers, 2 up to 1,500, then 1), because one room
+handles about 2,000 viewer messages per second comfortably. At 1,500–2,000 viewers everything still
+arrives, but a few percent of updates take 1–3 s. To test your relay:
 
 ```bash
 npm run relay:load-test -- --url https://klt-relay.<you>.workers.dev --viewers 1000 --seconds 30

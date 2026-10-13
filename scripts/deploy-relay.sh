@@ -10,6 +10,9 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELAY_DIR="$ROOT_DIR/relay"
 KEY_FILE="$RELAY_DIR/.publish-key"
 cd "$RELAY_DIR"
+# Wrangler can stop midway to ask about updating its "skills" for AI coding agents; that has nothing
+# to do with deploying, so don't ask.
+export WRANGLER_NO_SKILLS_UPDATE_PROMPTS=true
 
 if [[ ! -d node_modules ]]; then
   echo "安裝部署工具（wrangler）…"

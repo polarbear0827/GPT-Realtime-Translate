@@ -18,15 +18,19 @@ const { values: args } = parseArgs({
     key: { type: "string" },
     viewers: { type: "string", default: "1000" },
     seconds: { type: "string", default: "30" },
-    rate: { type: "string", default: "4" },
+    // Updates per second from the host; "auto" follows the app (public/js/share.js flushInterval).
+    rate: { type: "string", default: "auto" },
     ramp: { type: "string", default: "10" },
+    // Extra characters per update, to tell bandwidth limits from message-count limits.
+    pad: { type: "string", default: "0" },
   },
 });
 
 const viewerCount = Number(args.viewers);
 const seconds = Number(args.seconds);
-const rate = Number(args.rate);
+const rate = args.rate === "auto" ? (viewerCount > 1500 ? 1 : viewerCount > 400 ? 2 : 4) : Number(args.rate);
 const rampSeconds = Number(args.ramp);
+const padding = "字".repeat(Number(args.pad));
 
 if (args.url) {
   process.env.RELAY_URL = args.url;
@@ -116,7 +120,7 @@ let sent = 0;
 const total = Math.round(seconds * rate);
 for (let index = 0; index < total; index += 1) {
   const id = `L${Math.floor(index / 4)}`;
-  const text = `第 ${index} 次更新|${performance.now()}`;
+  const text = `第 ${index} 次更新|${performance.now()}|${padding}`;
   host.send({ t: "up", e: [{ i: id, k: "t", x: text, ...(index % 4 === 3 ? { f: 1 } : {}) }] });
   sent += 1;
   await sleep(1000 / rate);
