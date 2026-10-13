@@ -14,6 +14,7 @@ import {
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "../server/realtime.mjs";
+import { contentSecurityPolicy, normalizeRelayUrl, normalizeRoomTitle, validatePublishKey } from "../server/share.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const configPath = join(root, "public/realtime-config.json");
@@ -38,12 +39,39 @@ const fixtures = [
   { kind: "apikey", value: "sk-short" },
   { kind: "apikey", value: "sk-abc def ghi jkl mno pqr" },
   { kind: "apikey", value: 42 },
+  { kind: "relayUrl", value: "https://klt-relay.example.workers.dev" },
+  { kind: "relayUrl", value: "  HTTPS://Klt-Relay.Example.workers.dev/r/abc?x=1  " },
+  { kind: "relayUrl", value: "klt-relay.example.workers.dev" },
+  { kind: "relayUrl", value: "https://captions.example.com:443/" },
+  { kind: "relayUrl", value: "https://captions.example.com:8443" },
+  { kind: "relayUrl", value: "http://127.0.0.1:8788" },
+  { kind: "relayUrl", value: "http://localhost:8788/" },
+  { kind: "relayUrl", value: "http://klt-relay.example.workers.dev" },
+  { kind: "relayUrl", value: "ftp://example.com" },
+  { kind: "relayUrl", value: "https://user:pass@example.com" },
+  { kind: "relayUrl", value: "https://exa mple.com" },
+  { kind: "relayUrl", value: "" },
+  { kind: "relayUrl", value: 42 },
+  { kind: "publishKey", value: "  kltp_0123456789abcdefghijklmnopqrstuvwxyzABCDEF  " },
+  { kind: "publishKey", value: "kltp_short" },
+  { kind: "publishKey", value: "sk-0123456789abcdefghijklmnopqrstuvwxyzABCDEF" },
+  { kind: "publishKey", value: "kltp_0123456789abcdefghijklmnopqrstuv wxyz" },
+  { kind: "roomTitle", value: "  2026 AI\t開發者\n\n大會  " },
+  { kind: "roomTitle", value: "講".repeat(90) },
+  { kind: "roomTitle", value: null },
+  { kind: "csp", value: null },
+  { kind: "csp", value: "https://klt-relay.example.workers.dev" },
+  { kind: "csp", value: "http://127.0.0.1:8788" },
 ];
 
 function nodeResult(fixture) {
   try {
     if (fixture.kind === "translation") return { ok: buildTranslationSecretRequest(validateTranslationRequest(fixture.body, config), config) };
     if (fixture.kind === "transcription") return { ok: buildTranscriptionSecretRequest(validateTranscriptionRequest(fixture.body, config), config) };
+    if (fixture.kind === "relayUrl") return { ok: normalizeRelayUrl(fixture.value) };
+    if (fixture.kind === "publishKey") return { ok: validatePublishKey(fixture.value) };
+    if (fixture.kind === "roomTitle") return { ok: normalizeRoomTitle(fixture.value) };
+    if (fixture.kind === "csp") return { ok: contentSecurityPolicy(fixture.value) };
     return { ok: validateApiKeyFormat(fixture.value) };
   } catch (error) {
     if (error instanceof ValidationError) return { error: { status: error.status, message: error.message } };

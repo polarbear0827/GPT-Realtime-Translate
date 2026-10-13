@@ -8,11 +8,17 @@ protocol KeyStoring {
     func delete()
 }
 
-// Optional persistence of the API key in the login Keychain. Only used when the user ticks
-// "記住金鑰"; otherwise the key stays in memory and is gone when the app quits.
+// A secret in the login Keychain. The OpenAI key is only stored when the user ticks "記住金鑰"
+// (otherwise it stays in memory); the audience-sharing relay settings are always stored.
 struct KeychainStore: KeyStoring {
     private let service = "local.keynote-live-translator"
-    private let account = "openai-api-key"
+    private let account: String
+    private let label: String
+
+    init(account: String = "openai-api-key", label: String = "Keynote Live Translator OpenAI API key") {
+        self.account = account
+        self.label = label
+    }
 
     private var baseQuery: [String: Any] {
         [
@@ -28,7 +34,7 @@ struct KeychainStore: KeyStoring {
         var query = baseQuery
         query[kSecValueData as String] = Data(key.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        query[kSecAttrLabel as String] = "Keynote Live Translator OpenAI API key"
+        query[kSecAttrLabel as String] = label
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 

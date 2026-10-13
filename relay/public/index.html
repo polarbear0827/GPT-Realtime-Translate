@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#111311" />
+    <meta name="robots" content="noindex" />
+    <title>即時翻譯</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/viewer.css" />
+  </head>
+  <body>
+    <main class="landing">
+      <div class="landing-card">
+        <h1>即時翻譯</h1>
+        <p>掃描現場的 QR Code 就能觀看。也可以輸入講者提供的分享代碼：</p>
+        <form action="/go" method="get">
+          <input name="code" inputmode="latin" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="分享代碼" aria-label="分享代碼" required />
+          <button type="submit">前往</button>
+        </form>
+      </div>
+    </main>
+  </body>
+</html>

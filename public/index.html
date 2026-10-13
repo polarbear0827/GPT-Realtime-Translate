@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+      content="default-src 'self'; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <meta name="klt-token" content="__KLT_TOKEN__" />
     <title>Keynote Live Translator</title>
@@ -76,6 +76,9 @@
               </div>
             </div>
             <button id="presentBtn" type="button" title="投影模式（F）">投影模式</button>
+            <button id="shareBtn" class="share-button" type="button" aria-pressed="false" aria-controls="sharePanel" title="分享給觀眾（手機掃 QR Code 看翻譯）">
+              <span class="share-button-dot" aria-hidden="true"></span><span id="shareBtnLabel">分享</span>
+            </button>
             <button id="overlayBtn" type="button" aria-pressed="false" title="懸浮字幕（⌘⇧O）" hidden>懸浮字幕</button>
             <button id="transcriptBtn" type="button" aria-pressed="false" aria-controls="transcriptPanel" title="逐字稿（T）">逐字稿</button>
             <button id="settingsBtn" type="button" aria-pressed="false" aria-controls="settingsPanel" title="設定">設定</button>
@@ -108,6 +111,10 @@
       </main>
 
       <button class="exit-presentation" id="exitPresentBtn" type="button" hidden>離開投影模式（Esc）</button>
+      <aside class="caption-qr" id="captionQr" aria-label="用手機掃描，看即時翻譯" hidden>
+        <div class="caption-qr-code" id="captionQrCode"></div>
+        <span>掃描看翻譯</span>
+      </aside>
     </div>
 
     <aside class="drawer" id="transcriptPanel" aria-label="逐字稿" hidden>
@@ -119,6 +126,102 @@
         <p class="empty-state" id="transcriptEmpty">開始後，逐字稿會出現在這裡。</p>
       </div>
       <button type="button" class="jump-latest" id="jumpLatestBtn" hidden>跳到最新 ↓</button>
+    </aside>
+
+    <aside class="drawer share-panel" id="sharePanel" aria-label="分享給觀眾" hidden>
+      <header class="drawer-header">
+        <h2>分享給觀眾</h2>
+        <button type="button" class="ghost" data-close-drawer>關閉</button>
+      </header>
+      <div class="drawer-body">
+        <section class="settings-section" id="shareSetup" hidden>
+          <h3>連接分享伺服器</h3>
+          <p class="field-hint">
+            觀眾用手機掃 QR Code 就能看即時翻譯，不用安裝 App。這需要一台你自己的免費分享伺服器（Cloudflare），架設步驟見 README 的「分享給觀眾」；完成後把印出的網址和發佈金鑰貼到這裡。
+          </p>
+          <form class="share-config" id="shareConfigForm" novalidate>
+            <label class="field">
+              <span>分享伺服器網址</span>
+              <input id="shareUrlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://klt-relay.你的名稱.workers.dev" />
+            </label>
+            <label class="field">
+              <span>發佈金鑰</span>
+              <input id="shareKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="kltp_…" />
+            </label>
+            <p class="error-text" id="shareConfigError" role="alert" hidden></p>
+            <div class="field-row">
+              <button type="submit" class="primary" id="shareConfigSaveBtn">連接並驗證</button>
+              <button type="button" id="shareConfigCancelBtn" hidden>取消</button>
+              <button type="button" class="danger" id="shareConfigRemoveBtn" hidden>中斷連接</button>
+            </div>
+            <p class="field-hint" id="shareConfigNote">發佈金鑰只存在這台電腦（macOS 鑰匙圈）。連接後畫面會重新載入一次。</p>
+          </form>
+        </section>
+
+        <div class="share-live" id="shareLive" hidden>
+          <div class="share-card">
+            <div class="share-qr" id="shareQr"></div>
+            <div class="share-card-side">
+              <span class="share-phase" id="sharePhase" data-phase="connecting"><i aria-hidden="true"></i><span id="sharePhaseLabel">連線中</span></span>
+              <p class="share-viewers"><strong id="shareViewers">0</strong><span>位觀眾</span></p>
+              <p class="share-link" id="shareLink"></p>
+              <button type="button" id="shareCopyBtn">複製連結</button>
+            </div>
+          </div>
+          <div class="share-actions">
+            <button type="button" class="primary" id="shareProjectBtn" title="投影 QR Code（Q）">投影 QR Code</button>
+            <button type="button" id="sharePauseBtn" aria-pressed="false">暫停分享</button>
+          </div>
+          <p class="share-paused-note" id="sharePausedNote" hidden>暫停中：現在說的話不會送給觀眾，繼續分享後也不會補送。</p>
+          <label class="switch">
+            <input id="shareCaptionQrToggle" type="checkbox" />
+            <span>在字幕畫面角落顯示小 QR Code</span>
+          </label>
+
+          <section class="settings-section">
+            <h3>公告</h3>
+            <form class="input-with-button" id="shareNoteForm">
+              <input id="shareNoteInput" maxlength="240" autocomplete="off" placeholder="例如：中場休息 10 分鐘" />
+              <button type="submit">發布</button>
+            </form>
+            <p class="share-note-current" id="shareNoteCurrent" hidden>
+              <span id="shareNoteText"></span>
+              <button type="button" class="ghost" id="shareNoteClearBtn">移除</button>
+            </p>
+          </section>
+        </div>
+
+        <section class="settings-section" id="shareOptions" hidden>
+          <h3 id="shareOptionsTitle">觀眾畫面</h3>
+          <label class="field">
+            <span>活動名稱（顯示在觀眾的手機上）</span>
+            <input id="shareTitleInput" maxlength="80" autocomplete="off" placeholder="例如：2026 AI 開發者大會" />
+          </label>
+          <label class="switch">
+            <input id="shareOriginalToggle" type="checkbox" />
+            <span>讓觀眾也能看原文</span>
+          </label>
+        </section>
+
+        <section class="settings-section share-start" id="shareStartBlock" hidden>
+          <button type="button" class="primary" id="shareStartBtn">開始分享</button>
+          <p class="error-text" id="shareError" role="alert" hidden></p>
+          <ul class="share-facts">
+            <li>觀眾只能觀看，無法操作任何功能。</li>
+            <li>開始分享之前的字幕不會送出，暫停期間說的話也不會送出。</li>
+            <li>觀看人數不影響 OpenAI 的費用。</li>
+          </ul>
+          <p class="field-hint">
+            分享伺服器：<span id="shareServerLabel"></span>
+            <button type="button" class="ghost link-button" id="shareChangeServerBtn">更改</button>
+          </p>
+        </section>
+
+        <section class="settings-section" id="shareEndBlock" hidden>
+          <button type="button" class="danger" id="shareEndBtn">結束分享</button>
+          <p class="field-hint">結束後，觀眾畫面會顯示「已結束」，這個 QR Code 也會失效。關閉 App 不會結束分享：12 小時內重新開啟可以接著分享。</p>
+        </section>
+      </div>
     </aside>
 
     <aside class="drawer settings" id="settingsPanel" aria-label="設定" hidden>
@@ -297,6 +400,7 @@
             <dt>F</dt><dd>投影模式</dd>
             <dt>⌘⇧O</dt><dd>懸浮字幕（macOS App）</dd>
             <dt>T</dt><dd>逐字稿</dd>
+            <dt>Q</dt><dd>投影分享用的 QR Code</dd>
             <dt>+ / −</dt><dd>放大 / 縮小字幕</dd>
             <dt>Esc</dt><dd>關閉面板、離開投影模式</dd>
           </dl>
@@ -331,6 +435,17 @@
           <button type="submit" id="saveKeyBtn" class="primary">儲存並驗證</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="qr-projection" id="qrDialog" aria-labelledby="qrDialogTitle">
+      <div class="qr-projection-body">
+        <p class="qr-projection-eyebrow">用手機相機掃描，看即時翻譯</p>
+        <h2 id="qrDialogTitle">即時翻譯</h2>
+        <div class="qr-projection-code" id="qrDialogCode"></div>
+        <p class="qr-projection-url" id="qrDialogUrl"></p>
+        <p class="qr-projection-hint">不用安裝 App・中途加入也看得到前面的內容</p>
+      </div>
+      <button type="button" class="qr-projection-close" id="qrDialogCloseBtn">關閉（Esc）</button>
     </dialog>
 
     <dialog class="dialog" id="confirmDialog" aria-labelledby="confirmMessage">

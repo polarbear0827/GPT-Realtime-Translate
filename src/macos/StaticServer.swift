@@ -9,11 +9,22 @@ final class StaticServer {
     private let queue = DispatchQueue(label: "local.keynote-live-translator.static-server")
     private var listener: NWListener?
     private(set) var port: UInt16 = 0
+    private let lock = NSLock()
+    private var relayOrigin: String?
 
-    static let contentSecurityPolicy =
-        "default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; " +
-        "img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; " +
-        "base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+    /// The audience-sharing relay the page may connect to (it's in the Content-Security-Policy). Pages
+    /// loaded afterwards get the new policy.
+    func setRelayOrigin(_ origin: String?) {
+        lock.lock()
+        relayOrigin = origin
+        lock.unlock()
+    }
+
+    var contentSecurityPolicy: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return ShareRules.contentSecurityPolicy(relayOrigin: relayOrigin)
+    }
 
     init(root: URL) {
         self.root = root.standardizedFileURL
@@ -147,7 +158,7 @@ final class StaticServer {
             "Content-Type: \(contentType)",
             "Content-Length: \(body.count)",
             "Cache-Control: no-cache",
-            "Content-Security-Policy: \(Self.contentSecurityPolicy)",
+            "Content-Security-Policy: \(contentSecurityPolicy)",
             "X-Content-Type-Options: nosniff",
             "X-Frame-Options: DENY",
             "Referrer-Policy: no-referrer",

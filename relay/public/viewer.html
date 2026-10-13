@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#111311" />
+    <meta name="robots" content="noindex" />
+    <title>即時翻譯</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/viewer.css" />
+    <script type="module" src="/viewer.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="bar">
+        <div class="bar-text">
+          <h1 id="title">即時翻譯</h1>
+          <p id="languages">連線中…</p>
+        </div>
+        <span class="status" id="status" data-state="connecting" role="status">
+          <i aria-hidden="true"></i><span id="statusText">連線中</span>
+        </span>
+        <button type="button" class="icon-button" id="settingsBtn" aria-label="顯示設定" aria-expanded="false" aria-controls="sheet">
+          <span aria-hidden="true">Aa</span>
+        </button>
+      </header>
+
+      <div class="note" id="note" role="status" hidden>
+        <span class="note-mark" aria-hidden="true"></span>
+        <p id="noteText"></p>
+      </div>
+
+      <main class="feed" id="feed" aria-live="off">
+        <div class="empty" id="empty">
+          <span class="empty-mark" aria-hidden="true"></span>
+          <p id="emptyTitle">等待講者開始</p>
+          <p class="empty-hint" id="emptyHint">翻譯會即時出現在這裡，請保持這個畫面開著。</p>
+        </div>
+        <div class="lines" id="lines"></div>
+        <p class="ended" id="ended" hidden>分享已結束，上面的內容可以繼續瀏覽。</p>
+      </main>
+
+      <button type="button" class="jump" id="jumpBtn" hidden>最新內容 ↓</button>
+
+      <footer class="original" id="original" hidden>
+        <span class="original-label" id="originalLabel">原文</span>
+        <div class="original-text"><p id="originalText"></p></div>
+      </footer>
+    </div>
+
+    <div class="scrim" id="scrim" hidden></div>
+    <section class="sheet" id="sheet" aria-label="顯示設定" hidden>
+      <header class="sheet-header">
+        <h2>顯示設定</h2>
+        <button type="button" class="text-button" id="closeSheetBtn">完成</button>
+      </header>
+      <div class="sheet-row">
+        <span class="sheet-label">文字大小</span>
+        <div class="stepper">
+          <button type="button" id="smallerBtn" aria-label="縮小文字">A−</button>
+          <input type="range" id="scaleInput" min="0.8" max="2" step="0.1" aria-label="文字大小" />
+          <button type="button" id="largerBtn" aria-label="放大文字">A+</button>
+        </div>
+      </div>
+      <label class="sheet-row switch-row" id="originalRow" hidden>
+        <span class="sheet-label">顯示原文</span>
+        <input type="checkbox" id="originalToggle" />
+      </label>
+      <div class="sheet-row">
+        <span class="sheet-label">外觀</span>
+        <div class="segmented" role="radiogroup" aria-label="外觀">
+          <button type="button" role="radio" data-theme-choice="dark">深色</button>
+          <button type="button" role="radio" data-theme-choice="light">淺色</button>
+          <button type="button" role="radio" data-theme-choice="auto">自動</button>
+        </div>
+      </div>
+      <p class="fine-print">內容由 AI 即時翻譯，可能有誤。這個頁面只能觀看，不會收集你的資料。</p>
+    </section>
+  </body>
+</html>

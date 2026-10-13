@@ -6,8 +6,16 @@ import { startServer } from "../server/index.mjs";
 // OpenAI is stubbed: the server calls the global fetch, the tests talk to the server with node:http.
 const upstreamCalls = [];
 let modelStatus = 200;
+const RELAY_KEY = "kltp_test_0123456789abcdefghijklmnopqrstuvwxyz";
+let relaySocketUrl = "wss://relay.test/api/rooms/abcdefghjkmn/host";
 globalThis.fetch = async (url, init = {}) => {
   upstreamCalls.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null, headers: init.headers });
+  if (String(url).startsWith("https://down.test")) throw new TypeError("fetch failed");
+  if (String(url).startsWith("https://relay.test")) {
+    if (init.headers?.Authorization !== `Bearer ${RELAY_KEY}`) return Response.json({ error: "發佈金鑰不正確。" }, { status: 401 });
+    if (String(url).endsWith("/api/verify")) return Response.json({ ok: true });
+    return Response.json({ room: "abcdefghjkmn", hostToken: "host-token", viewerUrl: "https://relay.test/r/abcdefghjkmn", socketUrl: relaySocketUrl });
+  }
   if (String(url).includes("/models/")) return new Response("{}", { status: modelStatus });
   return new Response(JSON.stringify({ value: "ek_test_secret" }), { status: 200, headers: { "Content-Type": "application/json" } });
 };
@@ -139,4 +147,43 @@ test("deleting the key", async () => {
   assert.equal((await call({ method: "DELETE", path: "/api/key", auth: true })).status, 200);
   assert.equal((await call({ path: "/api/health", auth: true })).json.hasApiKey, false);
   assert.equal((await call({ method: "POST", path: "/api/realtime/translation-client-secret", auth: true, headers: json, body: {} })).status, 401);
+});
+
+test("sharing: the relay is verified before it's saved, and the page may then connect to it", async () => {
+  const save = (body) => call({ method: "POST", path: "/api/share/config", auth: true, headers: json, body });
+  assert.equal((await save({ url: "ftp://relay.test", key: RELAY_KEY })).status, 400);
+  assert.equal((await save({ url: "https://relay.test", key: "nope" })).status, 400);
+  const unreachable = await save({ url: "https://down.test", key: RELAY_KEY });
+  assert.equal(unreachable.status, 502);
+  assert.match(unreachable.json.error, /無法連線/);
+  const wrongKey = await save({ url: "https://relay.test", key: `${RELAY_KEY}x` });
+  assert.equal(wrongKey.status, 400);
+  assert.match(wrongKey.json.error, /拒絕/);
+  assert.equal((await call({ method: "POST", path: "/api/share/rooms", auth: true, headers: json, body: {} })).status, 409);
+
+  const saved = await save({ url: " relay.test/r/whatever ", key: RELAY_KEY });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json.origin, "https://relay.test");
+  const health = await call({ path: "/api/health", auth: true });
+  assert.deepEqual(health.json.share, { configured: true, origin: "https://relay.test" });
+  const page = await call({ path: "/" });
+  assert.match(page.headers["content-security-policy"], /connect-src 'self' https:\/\/api\.openai\.com wss:\/\/api\.openai\.com https:\/\/relay\.test wss:\/\/relay\.test;/);
+});
+
+test("sharing: rooms are created with the publish key and checked", async () => {
+  upstreamCalls.length = 0;
+  const room = await call({ method: "POST", path: "/api/share/rooms", auth: true, headers: json, body: { title: "  大會\n名稱 " } });
+  assert.equal(room.status, 200);
+  assert.equal(room.json.socketUrl, relaySocketUrl);
+  assert.equal(upstreamCalls[0].url, "https://relay.test/api/rooms");
+  assert.deepEqual(upstreamCalls[0].body, { title: "大會 名稱" });
+
+  relaySocketUrl = "wss://relay.test.evil.example/api/rooms/x/host";
+  const tampered = await call({ method: "POST", path: "/api/share/rooms", auth: true, headers: json, body: {} });
+  assert.equal(tampered.status, 502);
+  relaySocketUrl = "wss://relay.test/api/rooms/abcdefghjkmn/host";
+
+  assert.equal((await call({ method: "DELETE", path: "/api/share/config", auth: true })).status, 200);
+  assert.equal((await call({ path: "/api/health", auth: true })).json.share.configured, false);
+  assert.doesNotMatch((await call({ path: "/" })).headers["content-security-policy"], /relay\.test/);
 });

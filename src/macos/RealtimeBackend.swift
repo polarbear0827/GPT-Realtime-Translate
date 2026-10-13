@@ -171,19 +171,85 @@ struct RealtimeRules {
     }
 }
 
+// Audience-sharing relay settings and the page's Content-Security-Policy. Same rules as server/share.mjs.
+enum ShareRules {
+    static let roomTitleMaxChars = 80
+
+    static func contentSecurityPolicy(relayOrigin: String?) -> String {
+        var connect = "'self' https://api.openai.com wss://api.openai.com"
+        if let relayOrigin { connect += " \(relayOrigin) \(websocketOrigin(relayOrigin))" }
+        return "default-src 'self'; connect-src \(connect); media-src 'self' blob:; " +
+            "img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; " +
+            "base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+    }
+
+    /// https://host → wss://host, http://host → ws://host.
+    static func websocketOrigin(_ origin: String) -> String {
+        origin.hasPrefix("http") ? "ws" + origin.dropFirst(4) : origin
+    }
+
+    static func normalizeRelayURL(_ value: Any?) throws -> String {
+        var text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if text.isEmpty { throw BackendError(status: 400, message: "請輸入分享伺服器網址。") }
+        if text.range(of: "^[a-zA-Z][a-zA-Z0-9+.-]*://", options: .regularExpression) == nil { text = "https://" + text }
+        guard let components = URLComponents(string: text),
+              let scheme = components.scheme?.lowercased(),
+              let rawHost = components.host, !rawHost.isEmpty
+        else { throw BackendError(status: 400, message: "分享伺服器網址格式不正確。") }
+        let host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let local = ["127.0.0.1", "localhost", "::1"].contains(host)
+        guard scheme == "https" || (scheme == "http" && local), components.user == nil, components.password == nil else {
+            throw BackendError(status: 400, message: "分享伺服器網址必須以 https:// 開頭。")
+        }
+        var origin = "\(scheme)://\(host.contains(":") ? "[\(host)]" : host)"
+        if let port = components.port, !(scheme == "https" && port == 443), !(scheme == "http" && port == 80) {
+            origin += ":\(port)"
+        }
+        return origin
+    }
+
+    static func validatePublishKey(_ value: Any?) throws -> String {
+        let key = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard key.range(of: "^kltp_[A-Za-z0-9_-]{32,96}$", options: .regularExpression) != nil else {
+            throw BackendError(status: 400, message: "發佈金鑰格式不正確，應以 kltp_ 開頭。")
+        }
+        return key
+    }
+
+    static func normalizeRoomTitle(_ value: Any?) -> String {
+        guard let text = value as? String else { return "" }
+        let spaced = text
+            .replacingOccurrences(of: "[\\u0000-\\u001f\\u007f]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(decoding: Array(spaced.utf16.prefix(roomTitleMaxChars)), as: UTF16.self)
+    }
+}
+
 @MainActor
 final class RealtimeBackend {
     private let rules: RealtimeRules
     private let version: String
     private let session: URLSession
     private let keyStore: KeyStoring
+    private let relayStore: KeyStoring
     private var apiKey: String?
     private var rememberedKey = false
+    private var share: (origin: String, key: String)?
+    /// The page may only connect to the configured relay; the host updates its CSP when this changes.
+    var onShareOriginChange: ((String?) -> Void)?
+    var shareOrigin: String? { share?.origin }
 
-    init(config: RealtimeConfig, version: String, keyStore: KeyStoring = KeychainStore()) {
+    init(
+        config: RealtimeConfig,
+        version: String,
+        keyStore: KeyStoring = KeychainStore(),
+        relayStore: KeyStoring = KeychainStore(account: "share-relay", label: "Keynote Live Translator 分享伺服器")
+    ) {
         rules = RealtimeRules(config: config)
         self.version = version
         self.keyStore = keyStore
+        self.relayStore = relayStore
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.urlCache = nil
@@ -192,6 +258,12 @@ final class RealtimeBackend {
             apiKey = stored
             rememberedKey = true
         }
+        if let stored = relayStore.load()?.data(using: .utf8),
+           let saved = try? JSONSerialization.jsonObject(with: stored) as? [String: String],
+           let origin = try? ShareRules.normalizeRelayURL(saved["origin"]),
+           let key = try? ShareRules.validatePublishKey(saved["key"]) {
+            share = (origin, key)
+        }
     }
 
     // Routes the same API surface as the dev server. Returns (HTTP-like status, JSON object).
@@ -199,7 +271,37 @@ final class RealtimeBackend {
         do {
             switch (method, path) {
             case ("GET", "/api/health"):
-                return (200, ["ok": true, "version": version, "hasApiKey": apiKey != nil, "rememberedKey": rememberedKey])
+                return (200, [
+                    "ok": true,
+                    "version": version,
+                    "hasApiKey": apiKey != nil,
+                    "rememberedKey": rememberedKey,
+                    "share": ["configured": share != nil, "origin": (share?.origin as Any?) ?? NSNull()],
+                ])
+            case ("POST", "/api/share/config"):
+                let origin = try ShareRules.normalizeRelayURL(body["url"])
+                let key = try ShareRules.validatePublishKey(body["key"])
+                _ = try await relayCall(origin: origin, key: key, method: "GET", path: "/api/verify", body: nil)
+                share = (origin, key)
+                let saved = try JSONSerialization.data(withJSONObject: ["origin": origin, "key": key])
+                relayStore.save(String(decoding: saved, as: UTF8.self))
+                onShareOriginChange?(origin)
+                return (200, ["ok": true, "origin": origin])
+            case ("DELETE", "/api/share/config"):
+                share = nil
+                relayStore.delete()
+                onShareOriginChange?(nil)
+                return (200, ["ok": true])
+            case ("POST", "/api/share/rooms"):
+                guard let share else { throw BackendError(status: 409, message: "尚未設定分享伺服器。") }
+                let room = try await relayCall(
+                    origin: share.origin,
+                    key: share.key,
+                    method: "POST",
+                    path: "/api/rooms",
+                    body: ["title": ShareRules.normalizeRoomTitle(body["title"])]
+                )
+                return (200, room)
             case ("POST", "/api/key"):
                 let key = try RealtimeRules.validateApiKeyFormat(body["apiKey"])
                 let warnings = try await verify(key: key)
@@ -270,6 +372,40 @@ final class RealtimeBackend {
         } catch {
             throw BackendError(status: 502, message: "無法連線到 OpenAI，請檢查網路。")
         }
+    }
+
+    // Same as relayCall() in server/index.mjs.
+    private func relayCall(origin: String, key: String, method: String, path: String, body: [String: Any]?) async throws -> [String: Any] {
+        guard let url = URL(string: origin + path) else { throw BackendError(status: 400, message: "分享伺服器網址格式不正確。") }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            throw BackendError(status: 502, message: "分享伺服器回應逾時。")
+        } catch {
+            throw BackendError(status: 502, message: "無法連線到分享伺服器，請檢查網址與網路。")
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 502
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if status == 401 { throw BackendError(status: 400, message: "分享伺服器拒絕這把發佈金鑰。") }
+        guard (200..<300).contains(status) else {
+            throw BackendError(status: 502, message: json["error"] as? String ?? "分享伺服器回應錯誤（\(status)）。")
+        }
+        if path == "/api/rooms" {
+            let socket = json["socketUrl"] as? String ?? ""
+            guard json["room"] is String, json["hostToken"] is String, socket.hasPrefix(ShareRules.websocketOrigin(origin) + "/") else {
+                throw BackendError(status: 502, message: "分享伺服器的回應格式不正確。")
+            }
+        }
+        return json
     }
 
     // Same checks as verifyApiKey() in server/index.mjs.

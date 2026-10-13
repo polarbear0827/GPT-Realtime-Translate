@@ -88,7 +88,7 @@ class FakeTranscribe {
   }
 }
 
-function setup(overrides = {}) {
+function setup(overrides = {}, { feed, recording = true } = {}) {
   const store = new TranscriptStore();
   const notices = [];
   const api = {
@@ -105,9 +105,10 @@ function setup(overrides = {}) {
   const controller = new SessionController(
     {
       store,
+      feed,
       liveSource: new LiveTrack(),
       liveTranslation: new LiveTrack(),
-      isRecording: () => true,
+      isRecording: () => recording,
       languageInfo: (code) => ({ cjk: code === "zh" }),
       onChange: () => {},
       onCaptions: () => {},
@@ -336,4 +337,25 @@ test("microphone keeps using WebRTC translation", async () => {
   assert.ok(!(translates[0] instanceof FakeNativeTranslate));
   assert.equal(secretRequests.translation, 1);
   await controller.stop();
+});
+
+test("the sharing feed gets every sentence, even when the transcript isn't recorded", async () => {
+  const feed = new TranscriptStore();
+  const { controller, store } = setup({}, { feed, recording: false });
+  await controller.start(options());
+  translates[0].onEvent({ type: "output-delta", delta: "大家好。" });
+  translates[0].onEvent({ type: "output-delta", delta: "今天" });
+  transcribes[0].onEvent({ type: "delta", itemId: "item1", delta: "Hello" });
+  transcribes[0].onEvent({ type: "completed", itemId: "item1", transcript: "Hello everyone." });
+  assert.equal(store.entries.length, 0, "not recorded");
+  assert.deepEqual(
+    feed.entries.map((entry) => [entry.track, entry.text, entry.final]),
+    [
+      ["translation", "大家好。", true],
+      ["translation", "今天", false],
+      ["source", "Hello everyone.", true],
+    ],
+  );
+  await controller.stop();
+  assert.ok(feed.entries.every((entry) => entry.final), "stopping seals the feed too");
 });

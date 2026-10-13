@@ -6,6 +6,7 @@ import { buildOverlayPayload } from "./overlay.js";
 import { platform } from "./platform.js";
 import { SessionController } from "./session.js";
 import { loadSettings, safeStorage, saveSetting } from "./settings.js";
+import { ShareUi, applyQrDialog, renderCaptionQr } from "./share-ui.js";
 import { SystemAudioInput } from "./system-audio.js";
 import { TranscriptStore } from "./transcript.js";
 import { TranscriptView } from "./transcript-view.js";
@@ -47,6 +48,11 @@ const els = {
   exportBtn: $("exportBtn"),
   exportMenu: $("exportMenu"),
   presentBtn: $("presentBtn"),
+  shareBtn: $("shareBtn"),
+  sharePanel: $("sharePanel"),
+  captionQr: $("captionQr"),
+  captionQrCode: $("captionQrCode"),
+  qrDialog: $("qrDialog"),
   exitPresentBtn: $("exitPresentBtn"),
   transcriptBtn: $("transcriptBtn"),
   settingsBtn: $("settingsBtn"),
@@ -109,6 +115,8 @@ const settings = loadSettings();
 const storage = safeStorage();
 const toaster = createToaster(els.toasts);
 const store = new TranscriptStore();
+// Every sentence, recorded or not: audience sharing publishes from it.
+const feed = new TranscriptStore();
 const liveSource = new LiveTrack();
 const liveTranslation = new LiveTrack();
 const sourceView = new CaptionView(els.sourceCaption, "等待語音輸入…");
@@ -128,12 +136,14 @@ let exportMenu = null;
 let lastKeepAwake = null;
 let lastLeaveGuard = "";
 let overlayState = { visible: false, locked: false, opacity: 0.85, lines: 2, showOriginal: true };
+let share = null;
 let overlayTimer = 0;
 let lastOverlaySent = 0;
 let lastOverlayPayload = "";
 
 const controller = new SessionController({
   store,
+  feed,
   liveSource,
   liveTranslation,
   isRecording: () => settings.recording,
@@ -154,7 +164,7 @@ export function languageInfo(code) {
 
 // Dev-server diagnostics only (http://127.0.0.1:8787/?debug): exposes internals to the console.
 if (platform.kind === "web" && new URLSearchParams(location.search).has("debug")) {
-  window.__klt = { store, controller, liveSource, liveTranslation, scheduleCaptions };
+  window.__klt = { store, feed, controller, liveSource, liveTranslation, scheduleCaptions, share: () => share };
 }
 
 if (isDisplayView) initDisplayView();
@@ -170,6 +180,8 @@ function initDisplayView() {
     if (data?.type !== "captions") return;
     applyDisplayState(data);
   };
+  // Closing the projected QR code here (Esc) closes it in the main window too.
+  els.qrDialog.addEventListener("close", () => channel.postMessage({ type: "qr-closed" }));
   channel.postMessage({ type: "hello" });
 }
 
@@ -185,6 +197,8 @@ function applyDisplayState(data) {
     view.element.lang = part.lang;
     view.element.classList.toggle("is-empty", !part.text);
   }
+  renderCaptionQr(els.captionQr, els.captionQrCode, data.share);
+  applyQrDialog(els.qrDialog, data.qr);
 }
 
 // ---- main view ---------------------------------------------------------------------------------
@@ -207,14 +221,16 @@ async function initMainView() {
   platformInfo = await platform.info().catch(() => ({ supports: {} }));
   els.displayWindowBtn.hidden = !platformInfo.supports?.displayWindow;
   initSystemAudioAndOverlay();
+  let health = null;
   try {
-    const health = await api.getHealth();
+    health = await api.getHealth();
     hasApiKey = Boolean(health.hasApiKey);
     appVersion = health.version || platformInfo.version || "";
     els.versionLabel.textContent = appVersion ? `版本 ${appVersion}` : "";
   } catch (error) {
     toaster.show("error", `無法連線到本機服務：${error.message}`);
   }
+  initShare(health?.share);
   renderStatus();
   scheduleCaptions();
   if (!hasApiKey) openKeyDialog();
@@ -287,6 +303,7 @@ function updateSetting(name, value) {
   saveSetting(name, value);
   applyLayout(settings);
   scheduleCaptions();
+  if (name === "captionMode" || name === "sourceLanguage" || name === "targetLanguage") share?.updateMeta();
 }
 
 function bindEvents() {
@@ -344,6 +361,7 @@ function bindEvents() {
   });
 
   els.transcriptBtn.addEventListener("click", () => toggleDrawer(els.transcriptPanel));
+  els.shareBtn.addEventListener("click", () => toggleDrawer(els.sharePanel));
   els.settingsBtn.addEventListener("click", () => toggleDrawer(els.settingsPanel));
   for (const button of document.querySelectorAll("[data-close-drawer]")) {
     button.addEventListener("click", () => toggleDrawer(button.closest(".drawer"), false));
@@ -404,6 +422,7 @@ function bindEvents() {
   if (channel) {
     channel.onmessage = ({ data }) => {
       if (data?.type === "hello") broadcastCaptions();
+      if (data?.type === "qr-closed") share?.setProjecting(false);
     };
   }
 }
@@ -533,6 +552,7 @@ function renderStatus() {
     lastKeepAwake = keepAwake;
     platform.setKeepAwake(keepAwake);
   }
+  share?.setSessionStatus(status);
   updateLeaveGuard();
   renderElapsed();
 }
@@ -594,6 +614,8 @@ function broadcastCaptions() {
       displayAlign: settings.displayAlign,
       theme: settings.theme,
     },
+    share: share?.captionQrState() ?? null,
+    qr: share?.projectionState() ?? null,
   });
 }
 
@@ -634,12 +656,13 @@ async function setPresenting(on) {
 }
 
 function toggleDrawer(drawer, force) {
-  for (const panel of [els.transcriptPanel, els.settingsPanel]) {
+  for (const panel of [els.transcriptPanel, els.settingsPanel, els.sharePanel]) {
     const open = panel === drawer ? (force ?? panel.hidden) : false;
     panel.hidden = !open;
   }
   els.transcriptBtn.setAttribute("aria-pressed", String(!els.transcriptPanel.hidden));
   els.settingsBtn.setAttribute("aria-pressed", String(!els.settingsPanel.hidden));
+  els.shareBtn.setAttribute("aria-pressed", String(!els.sharePanel.hidden));
   transcriptView?.setOpen(!els.transcriptPanel.hidden);
 }
 
@@ -688,6 +711,10 @@ function handleShortcut(event) {
     case "t":
     case "T":
       toggleDrawer(els.transcriptPanel);
+      break;
+    case "q":
+    case "Q":
+      share?.toggleProjecting();
       break;
     case "+":
     case "=":
@@ -838,6 +865,29 @@ function sendOverlay() {
   if (json === lastOverlayPayload) return;
   lastOverlayPayload = json;
   platform.updateOverlay(payload);
+}
+
+// ---- audience sharing -------------------------------------------------------------------------
+
+function initShare(shareInfo) {
+  share = new ShareUi({
+    settings,
+    updateSetting,
+    feed,
+    display: displayText,
+    languageInfo,
+    toaster,
+    confirm: (message, options) => confirmDialog(els.confirmDialog, message, options),
+    storage,
+    getSessionStatus: () => controller.status,
+    isBusy: () => controller.status !== "idle",
+    onChange: ({ openPanel } = {}) => {
+      if (openPanel) toggleDrawer(els.sharePanel, true);
+      broadcastCaptions();
+      updateLeaveGuard();
+    },
+  });
+  share.init(shareInfo, platformInfo);
 }
 
 // ---- microphone -------------------------------------------------------------------------------
@@ -1010,11 +1060,17 @@ async function clearTranscript() {
 function updateLeaveGuard() {
   const live = controller.status !== "idle";
   const unsaved = store.hasUnsavedChanges;
-  const message = live ? "即時字幕仍在進行中，確定要離開嗎？" : "逐字稿還沒有匯出，確定要離開嗎？";
-  const state = `${live || unsaved}:${message}`;
+  const sharing = Boolean(share?.active);
+  const message = live
+    ? "即時字幕仍在進行中，確定要離開嗎？"
+    : sharing
+      ? "觀眾分享仍在進行中，離開後觀眾會看到「講者端離線」（12 小時內重新開啟可以接著分享）。確定要離開嗎？"
+      : "逐字稿還沒有匯出，確定要離開嗎？";
+  const guard = live || unsaved || sharing;
+  const state = `${guard}:${message}`;
   if (state === lastLeaveGuard) return;
   lastLeaveGuard = state;
-  platform.setLeaveGuard(live || unsaved, message);
+  platform.setLeaveGuard(guard, message);
 }
 
 function scheduleBackup() {

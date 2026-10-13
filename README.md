@@ -8,12 +8,15 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 - Transcript recording with SRT (source / translation / bilingual), Markdown, text and JSON export.
 - Translate what the Mac is playing (YouTube, meetings) without speakers, shown as floating captions
   over any app, including full-screen video (macOS 14.2+).
+- Share the captions with the audience: people scan a QR code and read the translation live on their
+  own phones (no app to install, view only). Runs on your own free Cloudflare relay; tested with
+  2,000 simulated viewers.
 - Light and dark appearance (follows the system by default).
 - macOS app (universal, ~2 MB), plus a browser version for development.
 
 ## Current Version
 
-`0.5.2` — see [CHANGELOG.md](CHANGELOG.md).
+`0.6.0` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -35,6 +38,19 @@ Realtime flow:
 - Both connections reconnect automatically and are rotated before the 60-minute Realtime session limit.
 - Stop drains the last sentence (`session.close` → `session.closed`, and waiting for the final transcript).
 
+Audience sharing (optional):
+
+```
+Mac app ──one WebSocket, text only──▶ relay (Cloudflare Worker + one Durable Object per room) ──▶ phones
+```
+
+- The app publishes caption sentences (a few updates per second, mostly appended text) to a room on a
+  relay you deploy from [`relay/`](relay). The relay fans them out to every viewer, so the venue's
+  upload carries one stream however many people watch, and viewers on mobile data work too.
+- Viewers open `https://<relay>/r/<room>` from the QR code: a static page that only receives. Late
+  joiners get the recent sentences; dropped connections reconnect and catch up.
+- Translation runs once on the Mac, so the OpenAI cost doesn't depend on the number of viewers.
+
 ## Security Model
 
 - The OpenAI API key is entered by the user at runtime and is never embedded in the app.
@@ -45,6 +61,11 @@ Realtime flow:
 - The dev server rejects requests whose `Host` isn't `127.0.0.1`/`localhost` (DNS rebinding), whose
   `Origin` is foreign, that aren't `application/json`, or that lack the per-launch token embedded in the page.
 - The macOS app doesn't expose the API over HTTP at all; the bridge only accepts calls from the app's own page.
+- Sharing: only holders of the relay's publish key (stored in the Keychain / dev-server memory, never
+  in the page) can create rooms; each room has its own host token. Viewer connections can't send
+  anything. The page's Content-Security-Policy allows exactly the configured relay. Nothing said before
+  sharing starts or while it's paused is sent, the original text is only sent if you allow it, and the
+  relay keeps captions in memory only — ending a share deletes the room.
 
 ## Caption Modes
 
@@ -70,6 +91,43 @@ the speakers off. The app streams it to gpt-realtime-translate over its own WebS
 reading. The first time, macOS asks to allow "System Audio Recording"; if captions stay empty, enable
 it under System Settings > Privacy & Security > Screen & System Audio Recording and reopen the app.
 
+## Sharing With The Audience
+
+Let everyone in the room read the translation on their own phone by scanning a QR code.
+
+**One-time setup (about 5 minutes):**
+
+1. Create a free Cloudflare account at <https://dash.cloudflare.com/sign-up>.
+2. In this repository run:
+
+   ```bash
+   npm run relay:deploy
+   ```
+
+   The first time, a browser window asks you to log in to Cloudflare and allow Wrangler (Cloudflare's
+   deploy tool), and Cloudflare may ask you to pick a `workers.dev` name. The script then deploys the
+   relay and prints two values: **分享伺服器網址** and **發佈金鑰** (the key is kept in
+   `relay/.publish-key`; don't commit or share it).
+3. In the app press **分享**, paste both values and press **連接並驗證**.
+
+**At the event:**
+
+1. **分享 → 開始分享** (optionally set the event name shown on phones, and whether viewers may see the
+   original). Sharing can start before the talk; phones show "等待講者開始".
+2. **投影 QR Code** (or Q) shows a full-screen QR code — on the caption window too if it's open. A small
+   QR code can also stay in the corner of the captions.
+3. **暫停分享** for off-the-record parts: what's said while paused is never sent, even after resuming.
+   **公告** pushes a short message to every phone (for example a break).
+4. **結束分享** when done: phones show "已結束" and the link stops working. Quitting the app doesn't end
+   the share; reopening within 12 hours offers to continue the same room, so nobody has to rescan.
+
+The free Cloudflare plan is enough for typical events (an hour-long talk with 1,000 viewers uses a
+small part of the daily allowance). To test the relay at scale:
+
+```bash
+npm run relay:load-test -- --url https://klt-relay.<you>.workers.dev --viewers 1000 --seconds 30
+```
+
 ## Using It
 
 1. Open the app and enter your OpenAI API key (it's verified immediately).
@@ -81,14 +139,14 @@ it under System Settings > Privacy & Security > Screen & System Audio Recording 
    and two lines; use **SRT 時間偏移** to align them with a recording.
 
 Shortcuts: Space start/stop · P pause display · M new paragraph · F presentation mode · T transcript ·
-+/− caption size · Esc close panels.
+Q project the share QR code · +/− caption size · Esc close panels.
 
 The transcript is auto-saved on the device while recording (can be turned off in settings) and offered
 for restore after an unexpected close.
 
 ## Install On macOS
 
-Download `KeynoteLiveTranslator-0.4.0.pkg` from GitHub Releases and open it. The app is installed to
+Download `KeynoteLiveTranslator-<version>.pkg` from GitHub Releases and open it. The app is installed to
 `/Applications` and runs on Apple silicon and Intel Macs with macOS 12.3 or later.
 
 If the release isn't notarized and macOS blocks it: Finder → `/Applications` → right-click
@@ -106,7 +164,13 @@ npm run check        # syntax check
 npm test             # unit, server security, session controller and Swift↔Node contract tests
 npm run test:macos   # runs the real UI in an offscreen WKWebView against the native bridge
 npm run build:pkg    # universal macOS app + installer in build/v<version>/
+
+npm run relay:dev    # sharing relay locally at http://127.0.0.1:8788 (needs relay/.dev.vars with PUBLISH_KEY=kltp_…)
+npm run relay:test   # relay end-to-end tests in wrangler dev
+npm run relay:load-test -- --viewers 2000   # simulated audience against a local relay
 ```
+
+The dev server picks up a relay from `KLT_RELAY_URL` and `KLT_RELAY_KEY`, or from the 分享 panel.
 
 ## Release Flow
 

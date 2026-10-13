@@ -46,3 +46,8 @@ export async function createTranscriptionSecret({ sourceLanguage, delay, prompt,
     await call("POST", "/api/realtime/transcription-client-secret", { sourceLanguage, delay, prompt, keywords, noiseReduction }),
   );
 }
+
+// Audience sharing (relay settings live in the backend, like the API key).
+export const saveShareConfig = (url, key) => call("POST", "/api/share/config", { url, key });
+export const deleteShareConfig = () => call("DELETE", "/api/share/config");
+export const createShareRoom = (title) => call("POST", "/api/share/rooms", { title });

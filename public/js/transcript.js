@@ -175,6 +175,27 @@ export class TranscriptStore {
     }
   }
 
+  // Drops the oldest finished entries beyond `max`, without notifying listeners. Used by the audience
+  // sharing feed, which only needs recent sentences however long the event runs.
+  trim(max) {
+    if (this.entries.length <= max) return;
+    const open = new Set(this.streams.values());
+    let excess = this.entries.length - max;
+    const kept = [];
+    for (const entry of this.entries) {
+      if (excess > 0 && entry.final && !open.has(entry)) {
+        excess -= 1;
+        this.byId.delete(entry.id);
+        for (const [key, item] of this.byItem) {
+          if (item === entry) this.byItem.delete(key);
+        }
+      } else {
+        kept.push(entry);
+      }
+    }
+    this.entries = kept;
+  }
+
   toJSON() {
     return {
       format: "keynote-live-translator/transcript",

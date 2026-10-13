@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS = {
   theme: "system",
   displayBackground: "theme",
   displayAlign: "left",
+  shareTitle: "",
+  shareOriginal: false,
+  shareCaptionQr: true,
 };
 
 const CHOICES = {

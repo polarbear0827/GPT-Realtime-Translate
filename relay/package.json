@@ -1,0 +1,16 @@
+{
+  "name": "keynote-live-translator-relay",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that relays live captions from the Keynote Live Translator app to audience phones.",
+  "scripts": {
+    "dev": "wrangler dev --port 8788",
+    "deploy": "wrangler deploy",
+    "test": "node --test --test-timeout=120000 test/*.test.mjs",
+    "load-test": "node scripts/load-test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}

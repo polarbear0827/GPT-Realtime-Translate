@@ -1,6 +1,6 @@
 {
   "name": "keynote-live-translator",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,10 +8,14 @@
   },
   "scripts": {
     "start": "node server/index.mjs",
-    "check": "for f in server/*.mjs public/js/*.js; do node --check \"$f\" || exit 1; done",
+    "check": "for f in server/*.mjs public/js/*.js relay/src/*.js relay/public/*.js relay/test/*.mjs relay/scripts/*.mjs; do node --check \"$f\" || exit 1; done",
     "test": "node --test --test-timeout=60000 tests/*.test.mjs",
     "test:macos": "zsh scripts/test-macos.sh",
     "build:app": "zsh scripts/build-app.sh",
-    "build:pkg": "zsh scripts/build-pkg.sh"
+    "build:pkg": "zsh scripts/build-pkg.sh",
+    "relay:deploy": "zsh scripts/deploy-relay.sh",
+    "relay:dev": "npm --prefix relay run dev",
+    "relay:test": "npm --prefix relay test",
+    "relay:load-test": "npm --prefix relay run load-test --"
   }
 }

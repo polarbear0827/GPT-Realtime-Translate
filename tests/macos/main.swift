@@ -4,6 +4,7 @@
 import AppKit
 import AVFoundation
 import Network
+import Vision
 import WebKit
 
 // Never read or write the user's real Keychain item from tests.
@@ -34,10 +35,13 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var translationOpened: [String] = []
     private var translationAudio: [String: Bool] = [:]
     private var translationClosed: [String] = []
+    private let relay = FakeRelay()
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
-        let backend = RealtimeBackend(config: config, version: "0.0.0-test", keyStore: MemoryKeyStore())
+        let backend = RealtimeBackend(config: config, version: "0.0.0-test", keyStore: MemoryKeyStore(), relayStore: MemoryKeyStore())
+        backend.onShareOriginChange = { [weak self] origin in self?.server.setRelayOrigin(origin) }
+        relay.start()
         bridge = NativeBridge(backend: backend, version: "0.0.0-test")
         bridge.host = self
         let configuration = WKWebViewConfiguration()
@@ -169,6 +173,8 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         }
 
         await checkSystemAudioAndOverlay()
+        await checkSharing()
+        await checkQrCodes()
         checkTextFitting()
         checkResponsiveSizing()
         checkDownsampler()
@@ -276,6 +282,90 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         check("more lines in the same height → smaller text", view.primarySize < oneLine)
     }
 
+    // Audience sharing through the bridge against a fake relay: settings are verified with the publish
+    // key, the page's Content-Security-Policy then allows the relay, and rooms are created.
+    private func checkSharing() async {
+        let relayOrigin = "http://127.0.0.1:\(relay.port)"
+        let policyBefore = await rawResponse("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n")
+        check("CSP allows no relay before one is set", !policyBefore.contains("127.0.0.1:\(relay.port)"))
+        let script = """
+        const h = window.webkit.messageHandlers.klt;
+        const call = async (message) => JSON.parse(await h.postMessage(message));
+        document.getElementById("keyDialog").close();
+        document.getElementById("shareBtn").click();
+        const setupShown = !document.getElementById("shareSetup").hidden;
+        const wrongKey = await call({ action: "request", method: "POST", path: "/api/share/config", body: { url: origin, key: "kltp_wrong_0123456789abcdefghijklmnopqrstuv" } });
+        const saved = await call({ action: "request", method: "POST", path: "/api/share/config", body: { url: origin + "/r/x", key: FakeKey } });
+        const health = await call({ action: "request", method: "GET", path: "/api/health" });
+        const room = await call({ action: "request", method: "POST", path: "/api/share/rooms", body: { title: "大會" } });
+        return JSON.stringify({ setupShown, wrongKey, saved, health, room });
+        """
+        do {
+            let raw = try await webView.callAsyncJavaScript(script, arguments: ["origin": relayOrigin, "FakeKey": FakeRelay.key], contentWorld: .page) as? String ?? "{}"
+            let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] ?? [:]
+            check("share panel asks for a relay first", result["setupShown"] as? Bool == true)
+            check("wrong publish key → 400", (result["wrongKey"] as? [String: Any])?["status"] as? Int == 400)
+            let saved = result["saved"] as? [String: Any]
+            check("relay saved as its origin", (saved?["data"] as? [String: Any])?["origin"] as? String == relayOrigin, "\(saved ?? [:])")
+            let share = ((result["health"] as? [String: Any])?["data"] as? [String: Any])?["share"] as? [String: Any]
+            check("health reports the relay", share?["configured"] as? Bool == true && share?["origin"] as? String == relayOrigin)
+            let room = (result["room"] as? [String: Any])?["data"] as? [String: Any]
+            check("room created with the publish key", room?["room"] as? String == "abcdefghjkmn" && relay.lastTitle == "大會", "\(room ?? [:])")
+        } catch {
+            check("sharing script", false, "\(error)")
+        }
+        let policyAfter = await rawResponse("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n")
+        check("CSP then allows exactly the relay", policyAfter.contains("connect-src 'self' https://api.openai.com wss://api.openai.com \(relayOrigin) ws://127.0.0.1:\(relay.port);"))
+    }
+
+    // The page's QR encoder, run in WebKit, decoded by Apple's Vision.
+    private func checkQrCodes() async {
+        let texts = [
+            "https://klt-relay.example.workers.dev/r/abcdefghjkmn",
+            "http://127.0.0.1:8788/r/k3m9x2p7q4ad",
+            "https://captions.example.com.tw/r/" + String(repeating: "z", count: 16),
+            "即時翻譯",
+            String(repeating: "Keynote Live Translator ", count: 12),
+        ]
+        let script = """
+        const { encodeQr } = await import("/js/qr.js");
+        return JSON.stringify(texts.map((text) => { const qr = encodeQr(text); return { size: qr.size, bits: Array.from(qr.modules).join("") }; }));
+        """
+        do {
+            let raw = try await webView.callAsyncJavaScript(script, arguments: ["texts": texts], contentWorld: .page) as? String ?? "[]"
+            let codes = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]] ?? []
+            var decoded: [String] = []
+            for code in codes {
+                decoded.append(decodeQr(size: code["size"] as? Int ?? 0, bits: code["bits"] as? String ?? "") ?? "")
+            }
+            check("QR codes from the page decode with Vision", decoded == texts, "\(decoded.map { String($0.prefix(30)) })")
+        } catch {
+            check("QR script", false, "\(error)")
+        }
+    }
+
+    private func decodeQr(size: Int, bits: String) -> String? {
+        let scale = 4
+        let margin = 4
+        let pixels = (size + margin * 2) * scale
+        guard size > 0, bits.count == size * size,
+              let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: pixels, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: pixels, height: pixels))
+        context.setFillColor(gray: 0, alpha: 1)
+        for (index, bit) in bits.enumerated() where bit == "1" {
+            let x = index % size
+            let y = index / size
+            context.fill(CGRect(x: (x + margin) * scale, y: pixels - (y + margin + 1) * scale, width: scale, height: scale))
+        }
+        guard let image = context.makeImage() else { return nil }
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+        try? VNImageRequestHandler(cgImage: image).perform([request])
+        return request.results?.first?.payloadStringValue
+    }
+
     private func checkDownsampler() {
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
         guard let downsampler = PCMDownsampler(inputFormat: format) else {
@@ -299,6 +389,18 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         check("level is preserved (0.5 sine → RMS ≈ 0.35)", abs(rms - 0.354) < 0.03, "\(rms)")
     }
 
+    private func rawResponse(_ request: String) async -> String {
+        await withCheckedContinuation { continuation in
+            let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: server.port)!, using: .tcp)
+            connection.start(queue: .main)
+            connection.send(content: Data(request.utf8), completion: .contentProcessed { _ in })
+            connection.receive(minimumIncompleteLength: 12, maximumLength: 65_536) { data, _, _, _ in
+                connection.cancel()
+                continuation.resume(returning: data.map { String(decoding: $0, as: UTF8.self) } ?? "")
+            }
+        }
+    }
+
     private func rawStatus(_ request: String) async -> Int {
         await withCheckedContinuation { continuation in
             let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: server.port)!, using: .tcp)
@@ -320,6 +422,71 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
                 finish(parts.count > 1 ? Int(parts[1]) ?? -1 : -1)
             }
         }
+    }
+}
+
+// A stand-in for the Cloudflare relay (relay/): checks the publish key and hands out a room.
+final class FakeRelay: @unchecked Sendable {
+    static let key = "kltp_harness_0123456789abcdefghijklmnopqrstuv"
+    private var listener: NWListener?
+    private(set) var port: UInt16 = 0
+    private(set) var lastTitle = ""
+
+    func start() {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try! NWListener(using: parameters)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .ready = state {
+                self?.port = listener.port?.rawValue ?? 0
+                ready.signal()
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: .global())
+            self?.receive(connection, Data())
+        }
+        listener.start(queue: .global())
+        _ = ready.wait(timeout: .now() + 5)
+        self.listener = listener
+    }
+
+    // Reads until the headers and the whole body (Content-Length) have arrived.
+    private func receive(_ connection: NWConnection, _ buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, _ in
+            let buffer = buffer + (data ?? Data())
+            let text = String(decoding: buffer, as: UTF8.self)
+            if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
+                let length = text.range(of: "(?i)content-length: *([0-9]+)", options: .regularExpression)
+                    .flatMap { Int(text[$0].split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
+                if buffer.count - end.upperBound >= length || complete {
+                    self?.respond(connection, text)
+                    return
+                }
+            }
+            if complete { self?.respond(connection, text) } else { self?.receive(connection, buffer) }
+        }
+    }
+
+    private func respond(_ connection: NWConnection, _ request: String) {
+        let authorized = request.contains("Authorization: Bearer \(Self.key)") || request.contains("authorization: Bearer \(Self.key)")
+        var status = 200
+        var body = "{\"ok\":true}"
+        if !authorized {
+            status = 401
+            body = "{\"error\":\"發佈金鑰不正確。\"}"
+        } else if request.hasPrefix("POST /api/rooms") {
+            if let range = request.range(of: "\r\n\r\n"),
+               let json = try? JSONSerialization.jsonObject(with: Data(request[range.upperBound...].utf8)) as? [String: Any] {
+                lastTitle = json["title"] as? String ?? ""
+            }
+            let origin = "127.0.0.1:\(port)"
+            body = "{\"room\":\"abcdefghjkmn\",\"hostToken\":\"token\",\"viewerUrl\":\"http://\(origin)/r/abcdefghjkmn\",\"socketUrl\":\"ws://\(origin)/api/rooms/abcdefghjkmn/host\"}"
+        }
+        let bytes = Data(body.utf8)
+        let head = "HTTP/1.1 \(status) X\r\nContent-Type: application/json\r\nContent-Length: \(bytes.count)\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(head.utf8) + bytes, completion: .contentProcessed { _ in connection.cancel() })
     }
 }
 

@@ -12,6 +12,7 @@ import {
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "./realtime.mjs";
+import { contentSecurityPolicy, normalizeRelayUrl, normalizeRoomTitle, validatePublishKey } from "./share.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const publicDir = join(rootDir, "public");
@@ -20,13 +21,7 @@ const appVersion = readFileSync(join(rootDir, "VERSION"), "utf8").trim();
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const OPENAI = "https://api.openai.com/v1";
 
-const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; connect-src 'self' https://api.openai.com wss://api.openai.com; media-src 'self' blob:; " +
-  "img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; " +
-  "base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
-
 const securityHeaders = {
-  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -44,15 +39,19 @@ const contentTypes = {
   ".ico": "image/x-icon",
 };
 
-export function startServer({ port = Number(process.env.PORT || 8787), host = "127.0.0.1" } = {}) {
+export function startServer({ port = Number(process.env.PORT || 8787), host = "127.0.0.1", relay = relayFromEnv(), fetchImpl = fetch } = {}) {
   // Per-launch secret: only the page served by this process knows it, so other local programs and
   // cross-site / DNS-rebinding requests cannot use the API key even though they can reach the port.
   const token = randomBytes(24).toString("base64url");
   let apiKey = null;
+  // Audience sharing relay: { origin, key } or null. Kept in memory like the API key.
+  let share = relay;
   let actualPort = port;
 
   const server = createServer(async (req, res) => {
     for (const [key, value] of Object.entries(securityHeaders)) res.setHeader(key, value);
+    // The page may connect to the configured relay and nothing else besides OpenAI.
+    res.setHeader("Content-Security-Policy", contentSecurityPolicy(share?.origin));
 
     if (!isAllowedHost(req.headers.host, actualPort) || !isAllowedOrigin(req.headers.origin, actualPort)) {
       sendJson(res, 403, { error: "Forbidden." });
@@ -88,7 +87,37 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
     res.setHeader("Cache-Control", "no-store");
 
     if (pathname === "/api/health" && req.method === "GET") {
-      sendJson(res, 200, { ok: true, version: appVersion, hasApiKey: Boolean(apiKey), rememberedKey: false });
+      sendJson(res, 200, {
+        ok: true,
+        version: appVersion,
+        hasApiKey: Boolean(apiKey),
+        rememberedKey: false,
+        share: { configured: Boolean(share), origin: share?.origin ?? null },
+      });
+      return;
+    }
+
+    if (pathname === "/api/share/config" && req.method === "POST") {
+      const body = await readJson(req);
+      const origin = normalizeRelayUrl(body.url);
+      const key = validatePublishKey(body.key);
+      await relayCall(fetchImpl, { origin, key }, "GET", "/api/verify");
+      share = { origin, key };
+      sendJson(res, 200, { ok: true, origin });
+      return;
+    }
+
+    if (pathname === "/api/share/config" && req.method === "DELETE") {
+      share = null;
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (pathname === "/api/share/rooms" && req.method === "POST") {
+      if (!share) throw new ValidationError("尚未設定分享伺服器。", 409);
+      const body = await readJson(req);
+      const room = await relayCall(fetchImpl, share, "POST", "/api/rooms", { title: normalizeRoomTitle(body.title) });
+      sendJson(res, 200, room);
       return;
     }
 
@@ -187,6 +216,38 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
       return actualPort;
     },
   };
+}
+
+function relayFromEnv() {
+  if (!process.env.KLT_RELAY_URL || !process.env.KLT_RELAY_KEY) return null;
+  return { origin: normalizeRelayUrl(process.env.KLT_RELAY_URL), key: validatePublishKey(process.env.KLT_RELAY_KEY) };
+}
+
+// Calls the relay with the publish key. Errors become ValidationErrors with a message for the user.
+export async function relayCall(fetchImpl, share, method, path, body) {
+  let response;
+  try {
+    response = await fetchImpl(`${share.origin}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${share.key}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new ValidationError(error?.name === "TimeoutError" ? "分享伺服器回應逾時。" : "無法連線到分享伺服器，請檢查網址與網路。", 502);
+  }
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // Not JSON: not our relay.
+  }
+  if (response.status === 401) throw new ValidationError("分享伺服器拒絕這把發佈金鑰。", 400);
+  if (!response.ok) throw new ValidationError(typeof data?.error === "string" ? data.error : `分享伺服器回應錯誤（${response.status}）。`, 502);
+  if (path === "/api/rooms" && (typeof data.room !== "string" || typeof data.hostToken !== "string" || !String(data.socketUrl).startsWith(`${share.origin.replace(/^http/, "ws")}/`))) {
+    throw new ValidationError("分享伺服器的回應格式不正確。", 502);
+  }
+  return data;
 }
 
 // Checks the key and model access once when the key is saved, so problems surface during rehearsal

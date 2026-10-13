@@ -28,6 +28,12 @@
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Keynote Live Translator 需要麥克風來產生即時字幕與翻譯。</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <!-- Lets the app reach a share relay running on this Mac (wrangler dev) over plain http. -->
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
   <key>NSAudioCaptureUsageDescription</key>
   <string>Keynote Live Translator 需要擷取電腦播放的聲音（例如影片或會議），才能即時翻譯成字幕。</string>
 </dict>

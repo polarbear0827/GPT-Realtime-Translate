@@ -25,6 +25,27 @@ jobs:
       - name: Unit, server and session tests
         run: npm test
 
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install wrangler
+        run: npm ci --prefix relay --no-audit --no-fund
+
+      - name: Relay end-to-end tests (wrangler dev)
+        run: npm run relay:test
+
+      - name: Load test (300 simulated viewers)
+        run: npm run relay:load-test -- --viewers 300 --seconds 10 --ramp 3
+
   macos:
     runs-on: macos-latest
     timeout-minutes: 20

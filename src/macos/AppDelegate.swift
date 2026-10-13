@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSApp.activate(ignoringOtherApps: true)
 
         server = StaticServer(root: publicURL)
+        server.setRelayOrigin(backend.shareOrigin)
+        backend.onShareOriginChange = { [weak self] origin in self?.server.setRelayOrigin(origin) }
         server.start(preferredPort: preferredPort) { [weak self] result in
             guard let self else { return }
             switch result {

@@ -19,6 +19,14 @@ for fixture in fixtures {
             results.append(["ok": rules.transcriptionSecretRequest(try rules.validateTranscription(body))])
         case "apikey":
             results.append(["ok": try RealtimeRules.validateApiKeyFormat(fixture["value"])])
+        case "relayUrl":
+            results.append(["ok": try ShareRules.normalizeRelayURL(fixture["value"])])
+        case "publishKey":
+            results.append(["ok": try ShareRules.validatePublishKey(fixture["value"])])
+        case "roomTitle":
+            results.append(["ok": ShareRules.normalizeRoomTitle(fixture["value"])])
+        case "csp":
+            results.append(["ok": ShareRules.contentSecurityPolicy(relayOrigin: fixture["value"] as? String)])
         default:
             results.append(["error": ["status": 0, "message": "unknown fixture"]])
         }
