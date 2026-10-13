@@ -12,7 +12,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { LIMITS, ROOM_ID_PATTERN, RoomState, cleanText } from "./room-state.js";
 
-const VERSION = "0.6.0";
+const VERSION = "1.0.0";
 const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const ROOM_ID_LENGTH = 12;
 const ALARM_EVERY_MS = 60 * 60 * 1000;

@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.0 - 2026-10-13
+
+First stable release. Everything from the 0.x series, ready for real events:
+
+- Live bilingual captions from `gpt-live-transcribe` (source) and `gpt-realtime-translate`
+  (translation), 13 source and 13 target languages, Taiwan Traditional Chinese via OpenCC.
+- Presentation mode, a second-screen caption window, light/dark/black/green-screen backgrounds.
+- Translate what the Mac is playing (Core Audio process tap) into floating captions over any app,
+  resizable with adjustable transparency.
+- Share with the audience: QR code → live captions on every phone, pause, announcements, viewer count;
+  runs on your own Cloudflare relay, connected with one click; measured with 1,000 viewers on Cloudflare.
+- Transcript with SRT / Markdown / text / JSON export, auto-backup, automatic reconnection and
+  rotation before the 60-minute session limit.
+- New README in Traditional Chinese with screenshots, architecture diagrams, technical details,
+  measured capacity, security model and troubleshooting.
+
 ## v0.6.3 - 2026-10-13
 
 - New logo and app icon (the logo on a dark macOS-style plate), also used as the app's toolbar mark —
