@@ -1,6 +1,6 @@
 {
   "name": "keynote-live-translator",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,6 +14,7 @@
     "build:app": "zsh scripts/build-app.sh",
     "build:pkg": "zsh scripts/build-pkg.sh",
     "relay:deploy": "zsh scripts/deploy-relay.sh",
+    "relay:connect": "zsh scripts/deploy-relay.sh --connect",
     "relay:dev": "npm --prefix relay run dev",
     "relay:test": "npm --prefix relay test",
     "relay:load-test": "npm --prefix relay run load-test --"

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.2 - 2026-10-13
+
+- Connecting the app to the sharing relay is automatic: after `npm run relay:deploy` the app asks
+  "連接分享伺服器？" and one click connects it — no copying the URL or publish key. The script opens the
+  app with a `keynote-live-translator://share-setup` link; the app always asks before connecting, and
+  rejects links without https or a valid key. `npm run relay:connect` reconnects without deploying.
+- The share panel's setup now shows the two steps, with manual entry tucked away.
+
 ## v0.6.1 - 2026-10-13
 
 - Sharing adapts its update rate to the audience size (4 updates per second up to 400 viewers, 2 up to

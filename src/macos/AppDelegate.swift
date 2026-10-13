@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         return overlay
     }()
     private var quitConfirmed = false
+    private var pendingShareSetup: [String: String]?
     var leaveGuard: (enabled: Bool, message: String) = (false, "")
 
     private let preferredPort: UInt16 = UInt16(ProcessInfo.processInfo.environment["KEYNOTE_TRANSLATOR_PORT"] ?? "") ?? 8787
@@ -62,6 +63,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.showFatalError("無法啟動本機頁面服務：\(error.localizedDescription)")
             }
         }
+    }
+
+    // keynote-live-translator://share-setup links from `npm run relay:deploy`. The page asks the user to
+    // confirm before connecting; if it isn't loaded yet it picks the link up when it starts.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let setup = urls.lazy.compactMap(ShareRules.parseSetupLink).first else { return }
+        pendingShareSetup = setup
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        deliverShareSetup()
+    }
+
+    private func deliverShareSetup() {
+        guard let setup = pendingShareSetup, let webView else { return }
+        let script = "window.__kltShareSetup ? (window.__kltShareSetup(\(NativeBridge.json(setup))), true) : false"
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            if result as? Bool == true { self?.pendingShareSetup = nil }
+        }
+    }
+
+    func takeShareSetup() -> [String: String]? {
+        defer { pendingShareSetup = nil }
+        return pendingShareSetup
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

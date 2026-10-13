@@ -32,6 +32,7 @@ function createMacPlatform(handler) {
     setOverlay: (state) => call({ action: "overlay", ...state }),
     updateOverlay: (payload) => call({ action: "overlayUpdate", ...payload }).catch(() => {}),
     setAppearance: (theme) => call({ action: "setAppearance", theme }).catch(() => {}),
+    takeShareSetup: () => call({ action: "takeShareSetup" }).catch(() => ({})),
     micHelp: "請到「系統設定 > 隱私權與安全性 > 麥克風」允許 Keynote Live Translator，然後重新開啟 App。",
     systemAudioHelp:
       "請確認正在播放聲音，並到「系統設定 > 隱私權與安全性 > 螢幕與系統錄音」的「僅限系統錄音」允許 Keynote Live Translator（變更後需重新開啟 App）。",

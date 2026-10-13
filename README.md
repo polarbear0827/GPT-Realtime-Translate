@@ -16,7 +16,7 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 
 ## Current Version
 
-`0.6.1` — see [CHANGELOG.md](CHANGELOG.md).
+`0.6.2` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -105,10 +105,15 @@ Let everyone in the room read the translation on their own phone by scanning a Q
    ```
 
    The first time, a browser window asks you to log in to Cloudflare and allow Wrangler (Cloudflare's
-   deploy tool), and Cloudflare may ask you to pick a `workers.dev` name. The script then deploys the
-   relay and prints two values: **分享伺服器網址** and **發佈金鑰** (the key is kept in
-   `relay/.publish-key`; don't commit or share it).
-3. In the app press **分享**, paste both values and press **連接並驗證**.
+   deploy tool), and Cloudflare may ask you to pick a `workers.dev` name.
+3. When the relay is up, the app (0.6.2+) asks **連接分享伺服器？** — press **連接**. Nothing to copy:
+   the script hands the relay's address and publish key to the app through a
+   `keynote-live-translator://share-setup` link, and the key is stored in the Keychain.
+
+The publish key is what stops strangers from using your relay (its address is in every QR code). It's
+generated for you, kept in `relay/.publish-key` (don't commit or share it) and only ever sent to
+Cloudflare and the app. `npm run relay:connect` reconnects the app (for example after reinstalling)
+without deploying; the panel's 手動輸入 section accepts the values by hand.
 
 **At the event:**
 

@@ -1231,6 +1231,40 @@ body.presenting.show-controls .exit-presentation,
   font-size: 13px;
 }
 
+.share-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 20px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.share-steps code,
+.share-panel .field-hint code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.share-manual {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.share-manual > summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.share-manual[open] > summary {
+  margin-bottom: 12px;
+}
+
 .share-start > .primary {
   min-height: 44px;
   font-size: 15px;

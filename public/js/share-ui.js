@@ -3,6 +3,7 @@
 // QR projection, in this window and (through main.js) in the caption window.
 
 import * as api from "./api.js";
+import { platform } from "./platform.js";
 import { qrSvg } from "./qr.js";
 import { SharePublisher, buildMeta } from "./share.js";
 
@@ -49,6 +50,9 @@ export class ShareUi {
       configCancel: $("shareConfigCancelBtn"),
       configRemove: $("shareConfigRemoveBtn"),
       configNote: $("shareConfigNote"),
+      manual: $("shareManual"),
+      autoSteps: $("shareAutoSteps"),
+      autoHint: $("shareAutoHint"),
       live: $("shareLive"),
       qr: $("shareQr"),
       phase: $("sharePhase"),
@@ -93,13 +97,22 @@ export class ShareUi {
   init(share, platformInfo) {
     this.configured = Boolean(share?.configured);
     this.origin = share?.origin ?? "";
-    if (platformInfo?.platform !== "macos") this.els.configNote.textContent = "發佈金鑰只保存在這個本機服務的記憶體中。連接後畫面會重新載入一次。";
+    if (platformInfo?.platform !== "macos") {
+      // Automatic pairing needs the macOS app; the dev server is set up by hand or with KLT_RELAY_*.
+      this.els.configNote.textContent = "發佈金鑰只保存在這個本機服務的記憶體中。連接後畫面會重新載入一次。";
+      this.els.autoSteps.hidden = true;
+      this.els.autoHint.hidden = true;
+      this.els.manual.open = true;
+    }
     this.els.titleInput.value = this.settings.shareTitle;
     this.els.originalToggle.checked = this.settings.shareOriginal;
     this.els.captionQrToggle.checked = this.settings.shareCaptionQr;
     this.bind();
     this.render();
     this.offerResume();
+    // `npm run relay:deploy` opens the app with a setup link; native code hands it over.
+    window.__kltShareSetup = (setup) => this.handleSetupLink(setup);
+    platform.takeShareSetup?.().then((setup) => this.handleSetupLink(setup));
     if (this.storage.get(REOPEN_KEY)) {
       this.storage.remove(REOPEN_KEY);
       this.onChange({ openPanel: true });
@@ -177,6 +190,28 @@ export class ShareUi {
       els.configSave.disabled = false;
       els.configSave.textContent = "連接並驗證";
     }
+  }
+
+  // A setup link carries the relay URL and publish key, so nothing has to be copied. Any app or web page
+  // could open such a link, so the user confirms the server first.
+  async handleSetupLink(setup) {
+    if (typeof setup?.url !== "string" || typeof setup?.key !== "string") return;
+    this.onChange({ openPanel: true });
+    const host = setup.url.replace(/^https?:\/\//, "");
+    if (this.active || this.isBusy()) {
+      this.toaster.show("warning", `要連接分享伺服器 ${host}，請先停止字幕並結束目前的分享，再執行一次 npm run relay:connect。`, { key: "share-setup", timeout: 0 });
+      return;
+    }
+    const message = this.configured && this.origin === setup.url
+      ? `重新連接分享伺服器「${host}」嗎？（發佈金鑰會更新成剛部署的這一組）`
+      : `要連接分享伺服器「${host}」嗎？只有在你剛執行 npm run relay:deploy 或 relay:connect 時才按「連接」。`;
+    if (!(await this.confirm(message, { okText: "連接", cancelText: "取消" }))) return;
+    this.editingServer = true;
+    this.els.manual.open = true;
+    this.els.urlInput.value = setup.url;
+    this.els.keyInput.value = setup.key;
+    this.render();
+    await this.saveServer();
   }
 
   async removeServer() {

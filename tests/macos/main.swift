@@ -36,6 +36,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var translationAudio: [String: Bool] = [:]
     private var translationClosed: [String] = []
     private let relay = FakeRelay()
+    private var pendingShareSetup: [String: String]?
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
@@ -78,6 +79,10 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     func setLeaveGuard(enabled: Bool, message: String) { leaveGuardCalls += 1 }
     func openDisplayWindow() {}
     func setAppearance(_ theme: String) { appearance = theme }
+    func takeShareSetup() -> [String: String]? {
+        defer { pendingShareSetup = nil }
+        return pendingShareSetup
+    }
 
     // Translation socket is simulated: it "opens", then delivers one translated delta.
     func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws {
@@ -174,6 +179,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
 
         await checkSystemAudioAndOverlay()
         await checkSharing()
+        await checkSetupLink()
         await checkQrCodes()
         checkTextFitting()
         checkResponsiveSizing()
@@ -316,6 +322,47 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         }
         let policyAfter = await rawResponse("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n")
         check("CSP then allows exactly the relay", policyAfter.contains("connect-src 'self' https://api.openai.com wss://api.openai.com \(relayOrigin) ws://127.0.0.1:\(relay.port);"))
+    }
+
+    // `npm run relay:deploy` opens the app with keynote-live-translator://share-setup?url=…&key=…; the page
+    // asks before connecting.
+    private func checkSetupLink() async {
+        let origin = "https://klt-relay.example.workers.dev"
+        let parsed = ShareRules.parseSetupLink(URL(string: "keynote-live-translator://share-setup?url=\(origin.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)&key=\(FakeRelay.key)")!)
+        check("setup link parsed", parsed == ["url": origin, "key": FakeRelay.key], "\(parsed ?? [:])")
+        let rejected = [
+            "keynote-live-translator://share-setup?url=http%3A%2F%2Fevil.example&key=\(FakeRelay.key)",
+            "keynote-live-translator://share-setup?url=\(origin)&key=nope",
+            "keynote-live-translator://other?url=\(origin)&key=\(FakeRelay.key)",
+            "https://share-setup?url=\(origin)&key=\(FakeRelay.key)",
+        ].compactMap { URL(string: $0) }.compactMap(ShareRules.parseSetupLink)
+        check("invalid setup links rejected (plain http, bad key, other host or scheme)", rejected.isEmpty)
+
+        pendingShareSetup = ["url": origin, "key": FakeRelay.key]
+        let script = """
+        const h = window.webkit.messageHandlers.klt;
+        const call = async (message) => JSON.parse(await h.postMessage(message));
+        const first = await call({ action: "takeShareSetup" });
+        const second = await call({ action: "takeShareSetup" });
+        window.__kltShareSetup(first);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const dialog = document.getElementById("confirmDialog");
+        const asked = dialog.open ? document.getElementById("confirmMessage").textContent : "";
+        document.getElementById("confirmCancelBtn").click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return JSON.stringify({ first, second, asked, closed: !dialog.open, panelOpen: !document.getElementById("sharePanel").hidden });
+        """
+        do {
+            let raw = try await webView.callAsyncJavaScript(script, contentWorld: .page) as? String ?? "{}"
+            let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] ?? [:]
+            check("setup link handed to the page once", (result["first"] as? [String: Any])?["url"] as? String == origin
+                && (result["second"] as? [String: Any])?.isEmpty == true)
+            let asked = result["asked"] as? String ?? ""
+            check("page asks before connecting, naming the server", asked.contains("klt-relay.example.workers.dev"), asked)
+            check("cancel leaves the settings alone", result["closed"] as? Bool == true && result["panelOpen"] as? Bool == true)
+        } catch {
+            check("setup link script", false, "\(error)")
+        }
     }
 
     // The page's QR encoder, run in WebKit, decoded by Apple's Vision.

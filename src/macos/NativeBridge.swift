@@ -19,6 +19,8 @@ protocol BridgeHost: AnyObject {
     func configureOverlay(_ settings: [String: Any]) -> [String: Any]
     func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?)
     func setAppearance(_ theme: String)
+    /// A relay setup link the app was opened with (see ShareRules.parseSetupLink), handed out once.
+    func takeShareSetup() -> [String: String]?
     func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws
     func setTranslationAudio(id: String, enabled: Bool)
     func closeTranslation(id: String, graceful: Bool) async
@@ -125,6 +127,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                 await host.closeTranslation(id: id, graceful: graceful)
                 reply(["ok": true])
             }
+        case "takeShareSetup":
+            reply(host.takeShareSetup() ?? [:])
         case "setAppearance":
             host.setAppearance(body["theme"] as? String ?? "system")
             reply(["ok": true])

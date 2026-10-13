@@ -216,6 +216,20 @@ enum ShareRules {
         return key
     }
 
+    static let setupScheme = "keynote-live-translator"
+
+    /// keynote-live-translator://share-setup?url=…&key=… — sent by `npm run relay:deploy` so the app
+    /// connects to the new relay without copying anything. Returns nil unless both values are valid.
+    static func parseSetupLink(_ url: URL) -> [String: String]? {
+        guard url.scheme?.lowercased() == setupScheme,
+              url.host?.lowercased() == "share-setup",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let origin = try? normalizeRelayURL(items.first(where: { $0.name == "url" })?.value),
+              let key = try? validatePublishKey(items.first(where: { $0.name == "key" })?.value)
+        else { return nil }
+        return ["url": origin, "key": key]
+    }
+
     static func normalizeRoomTitle(_ value: Any?) -> String {
         guard let text = value as? String else { return "" }
         let spaced = text

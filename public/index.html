@@ -137,8 +137,15 @@
         <section class="settings-section" id="shareSetup" hidden>
           <h3>連接分享伺服器</h3>
           <p class="field-hint">
-            觀眾用手機掃 QR Code 就能看即時翻譯，不用安裝 App。這需要一台你自己的免費分享伺服器（Cloudflare），架設步驟見 README 的「分享給觀眾」；完成後把印出的網址和發佈金鑰貼到這裡。
+            觀眾用手機掃 QR Code 就能看即時翻譯，不用安裝 App。這需要一台你自己的免費分享伺服器（Cloudflare）。
           </p>
+          <ol class="share-steps" id="shareAutoSteps">
+            <li>在這台 Mac 的專案資料夾執行 <code>npm run relay:deploy</code>（第一次會請你登入 Cloudflare）。</li>
+            <li>完成後 App 會自動跳出「連接分享伺服器？」，按「連接」就好，不用複製任何東西。</li>
+          </ol>
+          <p class="field-hint" id="shareAutoHint">已經部署過了？執行 <code>npm run relay:connect</code> 就能重新連接。</p>
+          <details class="share-manual" id="shareManual">
+            <summary>手動輸入網址與發佈金鑰</summary>
           <form class="share-config" id="shareConfigForm" novalidate>
             <label class="field">
               <span>分享伺服器網址</span>
@@ -156,6 +163,7 @@
             </div>
             <p class="field-hint" id="shareConfigNote">發佈金鑰只存在這台電腦（macOS 鑰匙圈）。連接後畫面會重新載入一次。</p>
           </form>
+          </details>
         </section>
 
         <div class="share-live" id="shareLive" hidden>
