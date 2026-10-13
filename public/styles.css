@@ -365,6 +365,30 @@ textarea {
   box-shadow: 0 0 0 5px var(--danger-ring);
 }
 
+/* The logo with the status dot as a badge on its corner. */
+.brand {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+}
+
+.brand-logo {
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
+.brand .status-dot,
+.brand .status-dot[data-status] {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  box-shadow: 0 0 0 2.5px var(--bg);
+}
+
 .connection-pills {
   display: flex;
   gap: 6px;

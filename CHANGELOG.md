@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.3 - 2026-10-13
+
+- New logo and app icon (the logo on a dark macOS-style plate), also used as the app's toolbar mark —
+  with the status light as a badge on its corner — and favicon, and on the viewer page as the tab icon,
+  the "Add to Home Screen" icon and on the landing page. All are generated from `assets/logo.png` by
+  `scripts/make-icons.sh`.
+- `npm run relay:deploy` only asks the app to connect on the first deploy (or when the relay's URL
+  changes), not on every update.
+
 ## v0.6.2 - 2026-10-13
 
 - Connecting the app to the sharing relay is automatic: after `npm run relay:deploy` the app asks

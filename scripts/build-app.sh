@@ -29,6 +29,7 @@ lipo -create -output "$APP_DIR/Contents/MacOS/KeynoteLiveTranslator" \
   "$WORK_DIR/KeynoteLiveTranslator-arm64" "$WORK_DIR/KeynoteLiveTranslator-x86_64"
 
 rsync -a --exclude ".DS_Store" "$ROOT_DIR/public/" "$APP_DIR/Contents/Resources/public/"
+cp "$ROOT_DIR/src/macos/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 sed -e "s/__VERSION__/$APP_VERSION/" -e "s/__BUILD_NUMBER__/$BUILD_NUMBER/" \
   "$ROOT_DIR/src/macos/Info.plist" > "$APP_DIR/Contents/Info.plist"
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null

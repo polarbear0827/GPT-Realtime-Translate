@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/app-icon.png" width="128" height="128" alt="Keynote Live Translator icon" /></p>
+
 # Keynote Live Translator
 
 Local-first realtime subtitles for keynote talks, demos, and live presentations.
@@ -16,7 +18,7 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 
 ## Current Version
 
-`0.6.2` — see [CHANGELOG.md](CHANGELOG.md).
+`0.6.3` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -179,6 +181,7 @@ npm run build:pkg    # universal macOS app + installer in build/v<version>/
 npm run relay:dev    # sharing relay locally at http://127.0.0.1:8788 (needs relay/.dev.vars with PUBLISH_KEY=kltp_…)
 npm run relay:test   # relay end-to-end tests in wrangler dev
 npm run relay:load-test -- --viewers 2000   # simulated audience against a local relay
+zsh scripts/make-icons.sh   # regenerate the app icon, favicons and touch icon from assets/logo.png
 ```
 
 The dev server picks up a relay from `KLT_RELAY_URL` and `KLT_RELAY_KEY`, or from the 分享 panel.

@@ -90,6 +90,8 @@ if [[ ! -s "$KEY_FILE" ]]; then
   (umask 077 && print -r -- "kltp_$(openssl rand -base64 36 | tr '+/' '-_' | tr -d '=\n')" > "$KEY_FILE")
 fi
 KEY="$(tr -d '[:space:]' < "$KEY_FILE")"
+PREVIOUS_URL=""
+[[ -s "$URL_FILE" ]] && PREVIOUS_URL="$(tr -d '[:space:]' < "$URL_FILE")"
 
 SECRETS="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
@@ -125,6 +127,10 @@ echo "────────────────────────�
 if [[ -z "$VERIFIED" ]]; then
   echo "⚠️  已部署，但暫時還連不上（新網址有時需要幾分鐘生效）。稍後執行 npm run relay:connect。"
   echo "  分享伺服器網址：$URL"
+elif [[ "$URL" == "$PREVIOUS_URL" ]]; then
+  # An update of a relay the app already knows: same URL and key, nothing to reconnect.
+  echo "分享伺服器已更新：$URL"
+  echo "App 不需要重新連接（要重新連接請執行 npm run relay:connect）。"
 else
   echo "分享伺服器已上線：$URL"
   connect_app
