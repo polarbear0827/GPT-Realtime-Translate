@@ -29,7 +29,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     private var leaveGuardCalls = 0
     private var appearance = ""
     private var systemAudioStarted = false
-    private var overlay: [String: Any] = ["visible": false, "locked": false, "fontScale": 1.0]
+    private var overlay: [String: Any] = ["visible": false, "locked": false, "opacity": 0.85, "lines": 2, "showOriginal": true]
     private var overlayUpdates: [(OverlayLine?, OverlayLine?)] = []
     private var translationOpened: [String] = []
     private var translationAudio: [String: Bool] = [:]
@@ -102,10 +102,10 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     }
     func stopSystemAudio() { systemAudioStarted = false }
     var overlayState: [String: Any] { overlay }
-    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any] {
-        if let visible { overlay["visible"] = visible }
-        if let locked { overlay["locked"] = locked }
-        if let fontScale { overlay["fontScale"] = fontScale }
+    func configureOverlay(_ settings: [String: Any]) -> [String: Any] {
+        for key in ["visible", "locked", "opacity", "lines", "showOriginal"] where settings[key] != nil {
+            overlay[key] = settings[key]
+        }
         return overlay
     }
     func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?) {
@@ -170,6 +170,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
 
         await checkSystemAudioAndOverlay()
         checkTextFitting()
+        checkResponsiveSizing()
         checkDownsampler()
 
         let port = server.port
@@ -189,7 +190,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         const h = window.webkit.messageHandlers.klt;
         const call = async (message) => JSON.parse(await h.postMessage(message));
         const info = await call({ action: "info" });
-        const overlay = await call({ action: "overlay", visible: true, fontScale: 1.3 });
+        const overlay = await call({ action: "overlay", visible: true, opacity: 0.4, lines: 3 });
         await call({ action: "overlayUpdate", primary: { sentences: ["你好。", "今天天氣很好。"], cjk: true, lang: "zh-Hant" }, secondary: { sentences: ["안녕하세요."], cjk: false, lang: "ko" } });
         await call({ action: "setAppearance", theme: "light" });
         const { SystemAudioInput } = await import("/js/system-audio.js");
@@ -223,7 +224,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             let supports = (result["info"] as? [String: Any])?["supports"] as? [String: Any]
             check("info reports system audio + overlay support", supports?["systemAudio"] as? Bool == true && supports?["overlay"] as? Bool == true)
             let overlay = result["overlay"] as? [String: Any]
-            check("overlay settings round trip", overlay?["visible"] as? Bool == true && overlay?["fontScale"] as? Double == 1.3)
+            check("overlay settings round trip", overlay?["visible"] as? Bool == true && overlay?["opacity"] as? Double == 0.4 && overlay?["lines"] as? Int == 3)
             check("overlay text reaches native", overlayUpdates.last?.0?.sentences == ["你好。", "今天天氣很好。"] && overlayUpdates.last?.1?.lang == "ko")
             check("theme reaches native window", appearance == "light")
             check("system audio chunks reach the page pipeline", result["chunks"] as? Int == 10, "\(result["chunks"] ?? "nil") chunks")
@@ -243,7 +244,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
     }
 
     private func checkTextFitting() {
-        let attributes = OverlayStyle.primaryAttributes(lang: "zh-Hant", scale: 1)
+        let attributes = OverlayStyle.primaryAttributes(lang: "zh-Hant", size: 30)
         let sentences = ["第一句話。", "第二句話比較長一點。", "最新的第三句。"]
         let wide = OverlayTextFitter.fit(sentences, cjk: true, attributes: attributes, width: 1000, maxLines: 2)
         check("fitter keeps every sentence that fits", wide == sentences.joined())
@@ -255,8 +256,24 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
         check("fitted text really fits two lines",
               OverlayTextFitter.height(tail, attributes, 300) <= OverlayTextFitter.lineHeight(attributes) * 2 + 1)
         let english = OverlayTextFitter.fit(["Short.", "This is the newest sentence, it keeps going and going for a while."],
-                                            cjk: false, attributes: OverlayStyle.primaryAttributes(lang: "en", scale: 1), width: 260, maxLines: 2)
+                                            cjk: false, attributes: OverlayStyle.primaryAttributes(lang: "en", size: 30), width: 260, maxLines: 2)
         check("latin text is cut at a word boundary", english.hasPrefix("…") ? !english.dropFirst().hasPrefix(" ") : true, english)
+    }
+
+    private func checkResponsiveSizing() {
+        // Text size follows the window height, and the height for a size round-trips.
+        let small = OverlayStyle.primarySize(forHeight: 100, lines: 2, showSecondary: true, primaryLang: "zh", secondaryLang: "ko")
+        let large = OverlayStyle.primarySize(forHeight: 300, lines: 2, showSecondary: true, primaryLang: "zh", secondaryLang: "ko")
+        check("taller window → larger text", large > small * 2.5, "\(small) → \(large)")
+        let height = OverlayStyle.height(forPrimarySize: 40, lines: 3, showSecondary: false)
+        let size = OverlayStyle.primarySize(forHeight: height, lines: 3, showSecondary: false, primaryLang: "zh", secondaryLang: "ko")
+        check("height ↔ size round trip", abs(size - 40) <= 1, "\(size)")
+        check("size is clamped", OverlayStyle.primarySize(forHeight: 20, lines: 3, showSecondary: true, primaryLang: "zh", secondaryLang: "ko") == OverlayStyle.minimumPrimarySize)
+        let view = CaptionTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
+        view.lines = 1
+        let oneLine = view.primarySize
+        view.lines = 3
+        check("more lines in the same height → smaller text", view.primarySize < oneLine)
     }
 
     private func checkDownsampler() {

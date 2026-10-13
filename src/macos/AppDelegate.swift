@@ -304,8 +304,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         overlay.state.json
     }
 
-    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any] {
-        overlay.apply(visible: visible, locked: locked, fontScale: fontScale)
+    func configureOverlay(_ settings: [String: Any]) -> [String: Any] {
+        overlay.apply(
+            visible: settings["visible"] as? Bool,
+            locked: settings["locked"] as? Bool,
+            opacity: settings["opacity"] as? Double,
+            lines: settings["lines"] as? Int,
+            showOriginal: settings["showOriginal"] as? Bool,
+            sizeStep: settings["sizeStep"] as? Int,
+            resetFrame: settings["resetFrame"] as? Bool ?? false
+        )
         return overlay.state.json
     }
 

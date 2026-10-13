@@ -15,7 +15,8 @@ protocol BridgeHost: AnyObject {
     func startSystemAudio(muteSource: Bool) throws
     func stopSystemAudio()
     var overlayState: [String: Any] { get }
-    func configureOverlay(visible: Bool?, locked: Bool?, fontScale: Double?) -> [String: Any]
+    /// Keys: visible, locked, opacity (0–1), lines (1–3), showOriginal, sizeStep (±1), resetFrame.
+    func configureOverlay(_ settings: [String: Any]) -> [String: Any]
     func updateOverlay(primary: OverlayLine?, secondary: OverlayLine?)
     func setAppearance(_ theme: String)
     func openTranslation(id: String, body: [String: Any], audioEnabled: Bool) async throws
@@ -102,11 +103,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             host.stopSystemAudio()
             reply(["ok": true])
         case "overlay":
-            reply(host.configureOverlay(
-                visible: body["visible"] as? Bool,
-                locked: body["locked"] as? Bool,
-                fontScale: body["fontScale"] as? Double
-            ))
+            reply(host.configureOverlay(body))
         case "translationOpen":
             let id = body["id"] as? String ?? ""
             let audioEnabled = body["audioEnabled"] as? Bool ?? true

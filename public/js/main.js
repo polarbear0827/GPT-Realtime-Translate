@@ -36,6 +36,11 @@ const els = {
   themeSelect: $("themeSelect"),
   overlaySettings: $("overlaySettings"),
   overlayLockToggle: $("overlayLockToggle"),
+  overlayOpacityInput: $("overlayOpacityInput"),
+  overlayOpacityValue: $("overlayOpacityValue"),
+  overlayLinesSelect: $("overlayLinesSelect"),
+  overlayShowOriginalToggle: $("overlayShowOriginalToggle"),
+  overlayResetBtn: $("overlayResetBtn"),
   sourceLanguageSelect: $("sourceLanguageSelect"),
   targetLanguageSelect: $("targetLanguageSelect"),
   recordBtn: $("recordBtn"),
@@ -122,7 +127,7 @@ let transcriptView = null;
 let exportMenu = null;
 let lastKeepAwake = null;
 let lastLeaveGuard = "";
-let overlayState = { visible: false, locked: false, fontScale: 1 };
+let overlayState = { visible: false, locked: false, opacity: 0.85, lines: 2, showOriginal: true };
 let overlayTimer = 0;
 let lastOverlaySent = 0;
 let lastOverlayPayload = "";
@@ -310,6 +315,13 @@ function bindEvents() {
   });
   els.overlayBtn.addEventListener("click", () => setOverlayVisible(!overlayState.visible));
   els.overlayLockToggle.addEventListener("change", () => configureOverlay({ locked: els.overlayLockToggle.checked }));
+  els.overlayOpacityInput.addEventListener("input", () => {
+    els.overlayOpacityValue.textContent = `${els.overlayOpacityInput.value}%`;
+    configureOverlay({ opacity: Number(els.overlayOpacityInput.value) / 100 });
+  });
+  els.overlayLinesSelect.addEventListener("change", () => configureOverlay({ lines: Number(els.overlayLinesSelect.value) }));
+  els.overlayShowOriginalToggle.addEventListener("change", () => configureOverlay({ showOriginal: els.overlayShowOriginalToggle.checked }));
+  els.overlayResetBtn.addEventListener("click", () => setOverlayVisible(true, { resetFrame: true }));
   els.recordBtn.addEventListener("click", () => {
     updateSetting("recording", !settings.recording);
     if (!settings.recording) store.sealAll();
@@ -771,7 +783,12 @@ function initSystemAudioAndOverlay() {
 
 function renderOverlayControls() {
   els.overlayBtn.setAttribute("aria-pressed", String(overlayState.visible));
-  els.overlayLockToggle.checked = overlayState.locked;
+  els.overlayLockToggle.checked = Boolean(overlayState.locked);
+  const opacity = Math.round((overlayState.opacity ?? 0.85) * 100);
+  if (document.activeElement !== els.overlayOpacityInput) els.overlayOpacityInput.value = String(opacity);
+  els.overlayOpacityValue.textContent = `${opacity}%`;
+  els.overlayLinesSelect.value = String(overlayState.lines ?? 2);
+  els.overlayShowOriginalToggle.checked = overlayState.showOriginal !== false;
 }
 
 async function configureOverlay(change) {
@@ -784,8 +801,8 @@ async function configureOverlay(change) {
   renderOverlayControls();
 }
 
-async function setOverlayVisible(visible) {
-  await configureOverlay({ visible });
+async function setOverlayVisible(visible, extra = {}) {
+  await configureOverlay({ visible, ...extra });
   if (overlayState.visible) {
     lastOverlayPayload = "";
     scheduleOverlay();

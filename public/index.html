@@ -230,17 +230,38 @@
               <option value="center">置中</option>
             </select>
           </label>
-          <div class="field-group" id="overlaySettings" hidden>
-            <label class="switch">
-              <input id="overlayLockToggle" type="checkbox" />
-              <span>鎖定懸浮字幕（滑鼠可穿透，不會擋住影片操作）</span>
-            </label>
-            <p class="field-hint">滑鼠移到懸浮字幕上可調整字級、鎖定或關閉；鎖定後可用選單「顯示方式 &gt; 鎖定懸浮字幕」（⌘⇧L）解除。</p>
-          </div>
           <div class="field-row">
             <button id="pauseBtn" type="button" aria-pressed="false">暫停顯示</button>
             <button id="displayWindowBtn" type="button">開啟字幕視窗（第二螢幕）</button>
           </div>
+        </section>
+
+        <section class="settings-section" id="overlaySettings" hidden>
+          <h3>懸浮字幕</h3>
+          <label class="field">
+            <span>背景不透明度 <output id="overlayOpacityValue"></output></span>
+            <input id="overlayOpacityInput" type="range" min="0" max="100" step="5" />
+          </label>
+          <label class="field">
+            <span>翻譯行數</span>
+            <select id="overlayLinesSelect">
+              <option value="1">1 行</option>
+              <option value="2">2 行</option>
+              <option value="3">3 行</option>
+            </select>
+          </label>
+          <label class="switch">
+            <input id="overlayShowOriginalToggle" type="checkbox" />
+            <span>顯示原文（翻譯下方的小字）</span>
+          </label>
+          <label class="switch">
+            <input id="overlayLockToggle" type="checkbox" />
+            <span>鎖定（滑鼠可穿透，不會擋住影片操作）</span>
+          </label>
+          <div class="field-row">
+            <button id="overlayResetBtn" type="button">重設位置與大小</button>
+          </div>
+          <p class="field-hint">拖曳懸浮字幕可移動；拖右下角或邊緣可調整大小，字會跟著視窗高度變大變小。滑鼠移到懸浮字幕上也能直接調整大小、透明度、鎖定或關閉。鎖定後可用選單「顯示方式 &gt; 鎖定懸浮字幕」（⌘⇧L）解除。</p>
         </section>
 
         <section class="settings-section">

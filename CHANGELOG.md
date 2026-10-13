@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.2 - 2026-10-13
+
+Floating captions are now responsive and adjustable:
+- Resize from any edge or the corner grip; the text size follows the window height and the line width
+  follows the window width. A− / A+ resize the window in steps.
+- Background opacity from solid frosted glass to fully transparent (hover slider or Settings); the text
+  shadow strengthens automatically as the background fades, so captions stay readable over video.
+- Settings > 懸浮字幕: opacity, 1–3 translation lines, show/hide the original, lock (click-through),
+  reset position and size.
+
 ## v0.5.1 - 2026-10-13
 
 - Fixed "翻譯連線逾時" when translating system audio: the app now streams the captured audio to

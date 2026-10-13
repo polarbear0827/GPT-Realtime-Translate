@@ -13,7 +13,7 @@ Local-first realtime subtitles for keynote talks, demos, and live presentations.
 
 ## Current Version
 
-`0.5.1` — see [CHANGELOG.md](CHANGELOG.md).
+`0.5.2` — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
@@ -60,8 +60,10 @@ Realtime flow:
 2. Pick **只顯示翻譯** (the spoken language is detected automatically) or 雙語, and the target language.
 3. Press **開始** and play the video. The floating caption window opens on top of everything,
    including full-screen video; drag it where you like.
-4. Hover the floating captions to change the text size, lock it (clicks pass through to the video) or
-   close it. ⌘⇧O shows/hides it and ⌘⇧L locks/unlocks it from the app's View menu.
+4. Resize the floating captions from any edge or the corner grip — the text grows with the window.
+   Hover it to change the size in steps, the background opacity (down to fully transparent), lock it
+   (clicks pass through to the video) or close it. More options (1–3 lines, show/hide the original,
+   reset position) are in 設定 > 懸浮字幕. ⌘⇧O shows/hides it and ⌘⇧L locks/unlocks it.
 
 The audio is captured digitally with a Core Audio process tap, so it works with headphones and with
 the speakers off. The app streams it to gpt-realtime-translate over its own WebSocket (no WebRTC). Optionally enable 設定 > 收音 > 把原本的聲音靜音 to silence the original while
