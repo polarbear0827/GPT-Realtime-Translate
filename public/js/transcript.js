@@ -7,17 +7,15 @@
 // Exporters align the two tracks by time, so a lagging translation never shifts the source text.
 // Text is stored as received (possibly Simplified Chinese); conversion happens at display/export time.
 
-import { clauseBreak, ruleBreak } from "./phrases.js";
+import { MIN_LINE_CHARS, clauseBreak, lineLength, ruleBreak } from "./phrases.js";
 import { lastSentenceBoundary } from "./text.js";
 
-// A gap this long between deltas ends the phrase, once it has a few words.
+// A gap this long between deltas ends the phrase, once it has MIN_LINE_CHARS.
 const PAUSE_SPLIT_MS = 900;
-const PAUSE_MIN_CHARS = { cjk: 6, other: 16 };
 // Without the language model, longer phrases are cut.
 const RULE_MAX_CHARS = { cjk: 24, other: 84 };
 // With it, only a phrase it hasn't answered about in time gets this long.
 const ASSISTED_MAX_CHARS = { cjk: 40, other: 140 };
-const RULE_MIN_CHARS = { cjk: 4, other: 12 };
 
 export class TranscriptStore {
   constructor() {
@@ -126,8 +124,7 @@ export class TranscriptStore {
   appendStream(streamKey, { track, language, delta, atMs, cjk, assisted = false }) {
     if (!delta) return;
     let entry = this.openStream(streamKey);
-    const minChars = cjk ? PAUSE_MIN_CHARS.cjk : PAUSE_MIN_CHARS.other;
-    if (entry && atMs - entry.endMs >= PAUSE_SPLIT_MS && entry.text.trim().length >= minChars) {
+    if (entry && atMs - entry.endMs >= PAUSE_SPLIT_MS && lineLength(entry.text) >= MIN_LINE_CHARS) {
       this.sealStream(streamKey);
       entry = null;
     }
@@ -271,7 +268,7 @@ function phraseBreak(text, { cjk, language, assisted }) {
   const clause = clauseBreak(text);
   if (clause > 0) return clause;
   if (text.trim().length <= (assisted ? ASSISTED_MAX_CHARS : RULE_MAX_CHARS)[kind]) return -1;
-  return ruleBreak(text, { language, minChars: RULE_MIN_CHARS[kind] });
+  return ruleBreak(text, { language });
 }
 
 // When the character at `index` arrived.

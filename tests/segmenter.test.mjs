@@ -153,3 +153,9 @@ test("a model that rewrites the text instead of breaking it is set aside for a w
   await advance(21_000);
   assert.equal(segmenter.active, true);
 });
+
+test("the model can't cut a line shorter than 10 characters: 「對，」 stays with what follows", async () => {
+  const { feed, texts } = setup(async ({ text }) => text.split(/(?<=，)|(?=所以)/));
+  await feed("對，這局裡有很多工具和英雄所以他");
+  assert.deepEqual(texts(), ["對，這局裡有很多工具和英雄", "所以他"]);
+});

@@ -3,7 +3,7 @@
 // itself is never changed. Every phrase but the last (which may still be growing) becomes its own line.
 // One request per stream is in flight at a time; text that arrived meanwhile is sent when it returns.
 
-import { alignBreaks, headsAt } from "./phrases.js";
+import { alignBreaks, headsAt, longEnough } from "./phrases.js";
 
 // Not worth asking about less text than this…
 const MIN_CHARS = { cjk: 5, other: 16 };
@@ -89,7 +89,9 @@ export class PhraseSegmenter {
             return;
           }
           this.mismatches = 0;
-          if (breaks.length) this.apply(key, headsAt(text, breaks));
+          // A phrase shorter than MIN_LINE_CHARS ("對，") stays with the next one.
+          const cuts = longEnough(text, breaks);
+          if (cuts.length) this.apply(key, headsAt(text, cuts));
         },
         (error) => {
           if (this.closed) return;

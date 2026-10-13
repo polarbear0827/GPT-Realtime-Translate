@@ -1,9 +1,13 @@
 // Phrase boundaries for live captions. Pure text functions, no DOM.
 // - alignBreaks: maps the line breaks chosen by the language model (see segmenter.js) back onto the
 //   original text, which is never changed.
-// - clauseBreak / splitClauses: every comma (and semicolon or colon) ends a line.
+// - clauseBreak / splitClauses: a comma (or semicolon or colon) ends a line, once it has MIN_LINE_CHARS.
 // - ruleBreak: the fallback used when the model isn't available: connectives and sentence-final
 //   particles, never inside a word.
+
+// No line is cut shorter than this many characters (punctuation and spaces don't count): "對，" stays
+// with what follows.
+export const MIN_LINE_CHARS = 10;
 
 const SPACE = /\s/;
 const PUNCTUATION = /[\p{P}\p{S}]/u;
@@ -55,23 +59,39 @@ export function headsAt(text, breaks) {
 // inside numbers (3,000 or 3:00).
 const CLAUSE_MARKS = /[，；：]|[,;:](?=\s|\p{Script=Han}|$)/gu;
 
+// Characters that count towards a line's length.
+export function lineLength(text) {
+  let length = 0;
+  for (const char of text) if (!SPACE.test(char) && !PUNCTUATION.test(char)) length += 1;
+  return length;
+}
+
+// Cut points that don't leave a line shorter than MIN_LINE_CHARS: a short piece joins the next one.
+export function longEnough(text, cuts) {
+  const kept = [];
+  for (const cut of cuts) {
+    if (lineLength(text.slice(kept.at(-1) ?? 0, cut)) >= MIN_LINE_CHARS) kept.push(cut);
+  }
+  return kept;
+}
+
 function clauseCuts(text) {
   const cuts = [];
   for (const match of text.matchAll(CLAUSE_MARKS)) {
     let cut = match.index + match[0].length;
     while (cut < text.length && (SPACE.test(text[cut]) || CLOSING.test(text[cut]))) cut += 1;
-    if (text.slice(0, match.index).trim() && cut > (cuts.at(-1) ?? 0)) cuts.push(cut);
+    if (cut > (cuts.at(-1) ?? 0)) cuts.push(cut);
   }
-  return cuts;
+  return longEnough(text, cuts);
 }
 
-// Position after the first comma that ends a phrase, or -1. A comma at the very end isn't confirmed
-// yet ("3," may continue as "3,000").
+// Position after the first comma that ends a long enough line, or -1. A comma at the very end isn't
+// confirmed yet ("3," may continue as "3,000").
 export function clauseBreak(text) {
   return clauseCuts(text).find((cut) => cut < text.length) ?? -1;
 }
 
-// Finished text cut after every comma.
+// Finished text cut after its commas (see clauseCuts).
 export function splitClauses(text) {
   const lines = headsAt(text, clauseCuts(text));
   const rest = text.slice(clauseCuts(text).at(-1) ?? 0).trim();
@@ -136,7 +156,7 @@ function fallbackWords(text) {
 // then after a sentence-final particle, then any word boundary that doesn't split a phrase). Among
 // equally strong ones the first, so each clause gets its own line; among plain word boundaries the
 // last. Keeps at least `minChars` before the cut; text.length when there's no boundary.
-export function ruleBreak(text, { language = "", minChars = 4 } = {}) {
+export function ruleBreak(text, { language = "", minChars = MIN_LINE_CHARS } = {}) {
   const cjk = CJK.test(text);
   const parts = words(text, language);
   let best = { score: 0, cut: text.length };
@@ -144,7 +164,7 @@ export function ruleBreak(text, { language = "", minChars = 4 } = {}) {
     const { segment, index } = parts[part];
     if (SPACE.test(segment)) continue;
     const head = text.slice(0, index).trim();
-    if (head.length < minChars) continue;
+    if (lineLength(head) < minChars) continue;
     const previous = parts[part - 1].segment.trim() || parts[part - 2]?.segment || "";
     const score = cjk ? cjkScore(text, index, previous) : wordScore(segment, previous, head);
     if (score > best.score || (score > 0 && score === best.score && score < STRONG)) best = { score, cut: index };

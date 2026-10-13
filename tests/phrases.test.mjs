@@ -19,15 +19,17 @@ test("whitespace and punctuation the model added or dropped don't matter; change
   assert.equal(alignBreaks(text, "not lines"), null);
 });
 
-test("every comma ends a line; lists, numbers and an unconfirmed comma don't", () => {
-  assert.equal(clauseBreak("這局裡有很多工具,能直接"), 9);
-  assert.equal(clauseBreak("對，這就是"), 2);
+test("a comma ends a line once it has 10 characters; lists, numbers and an unconfirmed comma don't", () => {
+  assert.equal(clauseBreak("這局裡有很多工具和英雄,能直接"), 12);
+  assert.equal(clauseBreak("對，這就是"), -1, "「對，」 stays with what follows");
+  assert.equal(clauseBreak("這局裡有很多工具,能直接"), -1, "8 characters");
   assert.equal(clauseBreak("Probably the right call there, Geckos was"), 31);
   assert.equal(clauseBreak("成長到3,000人在3:00"), -1, "numbers");
   assert.equal(clauseBreak("這局裡有很多工具，"), -1, "not confirmed until more text arrives");
   assert.equal(clauseBreak("男槍、阿卡麗和Vi"), -1, "enumeration comma");
   assert.equal(clauseBreak("，所以"), -1, "nothing before it");
-  assert.deepEqual(splitClauses("對，這就是重點；他說：好, OK"), ["對，", "這就是重點；", "他說：", "好,", "OK"]);
+  assert.deepEqual(splitClauses("對，這就是重點；他說：好, OK"), ["對，這就是重點；他說：好, OK"]);
+  assert.deepEqual(splitClauses("對，這局裡有很多工具，能直接秒掉Quad，這就是其中之一"), ["對，這局裡有很多工具，能直接秒掉Quad，", "這就是其中之一"]);
   assert.deepEqual(splitClauses("If he comes online, this gets hard,"), ["If he comes online,", "this gets hard,"]);
 });
 
@@ -40,7 +42,7 @@ test("long phrases are cut where the meaning breaks, never inside a word", () =>
     rest = rest.slice(cut);
   }
   lines.push(rest);
-  assert.deepEqual(lines, ["有經濟差", "儘管前期人頭一直往下掉", "所以他的大樹又快上線了", "再看男槍和阿卡麗都能衝進後排", "咱們已經知道男槍找到人會怎麼打Karsa"]);
+  assert.deepEqual(lines, ["有經濟差儘管前期人頭一直往下掉", "所以他的大樹又快上線了", "再看男槍和阿卡麗都能衝進後排", "咱們已經知道男槍找到人會怎麼打Karsa"]);
   assert.equal(ruleBreak("他們決定不要往前衝卡爾則代表他們", { language: "zh" }) > 0, true);
   const english = "They do make the call not to dash forward on the parts as we happen and the team is ready";
   assert.equal(english.slice(ruleBreak(english, { language: "en", minChars: 12 })), "and the team is ready");

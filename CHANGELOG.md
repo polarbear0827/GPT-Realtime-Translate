@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.2 - 2026-10-13
+
+- **No line shorter than 10 characters.** A comma no longer leaves a short piece such as 「對，」 on a
+  line of its own: it stays with what follows until the line has 10 characters (punctuation and spaces
+  don't count). The language model's breaks, pause breaks and the fallback rules follow the same
+  minimum, and the model is told about it.
+
 ## v1.2.1 - 2026-10-13
 
 - **Every comma starts a new line**, in every caption view, with or without the language model (so do
