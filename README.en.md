@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Live captions and translation for talks, meetings and videos — and the whole audience can follow along on their own phones.</strong><br />
-  A native macOS app built on OpenAI <code>gpt-live-transcribe</code> and <code>gpt-realtime-translate</code>.
+  A native macOS app running on OpenAI (<code>gpt-realtime-translate</code>, <code>gpt-live-transcribe</code>) or Google Gemini (<code>Gemini 3.5 Live Translate</code>, <code>Gemini 3.5 Transcribe</code>).
 </p>
 
 <p align="center">
@@ -48,9 +48,10 @@
 | 📱 **The whole room reads along** | People scan a QR code and read the live translation on their phones — nothing to install. Measured with 1,000 simulated viewers: 95% of captions arrived within 0.35 s. |
 | 💸 **More viewers, same cost** | Translation runs once, on the speaker's Mac; only text is shared. The sharing relay fits in Cloudflare's free plan. |
 | 🎧 **Translate videos without speakers** | Captures what the Mac is playing (YouTube, online meetings) digitally — headphones are fine — and floats the translation over full-screen video. |
-| 🔐 **Your key stays on your Mac** | The OpenAI key lives only in the app (optionally in the macOS Keychain); the web page never sees it. The sharing relay is yours too. |
-| 🧠 **Specialised models** | `gpt-live-transcribe` for an accurate source transcript (with keywords and context), `gpt-realtime-translate` for translation, `gpt-4.1-mini` for line breaks by meaning. |
-| 🛟 **Built for long sessions** | Automatic reconnection, a seamless switch before the 60-minute session limit, the last sentence finished on stop, transcript auto-backup. |
+| 🔀 **OpenAI or Google Gemini** | Switch providers in Settings; each keeps its own key. Gemini has a free tier, handy for trying things out. |
+| 🔐 **Your keys stay on your Mac** | OpenAI and Gemini keys live only in the app (optionally in the macOS Keychain); the web page never sees them. The sharing relay is yours too. |
+| 🧠 **Specialised models** | One model each for translation, the source transcript (with keywords) and line breaks by meaning — see "Two providers" below. |
+| 🛟 **Built for long sessions** | Automatic reconnection, a seamless switch before each connection expires (OpenAI at 55 minutes, Gemini at 8), the last sentence finished on stop, transcript auto-backup. |
 | 📝 **Subtitles ready after the talk** | Export SRT (source / translation / bilingual), Markdown, plain text or JSON; SRT cues follow subtitle conventions. |
 | 🪶 **Small and native** | A universal Swift + WKWebView app of about 4 MB — no Electron, no background services. |
 
@@ -97,7 +98,7 @@ Choose the audio source "電腦播放的聲音" (what the Mac is playing): the a
 ## Quick start
 
 1. Download `KeynoteLiveTranslator-<version>.pkg` from [Releases](https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest) and install it (macOS 12.3 or later; capturing what the Mac plays needs macOS 14.2 or later).
-2. Open the app and enter your OpenAI API key. It's verified right away, including access to both models; it's stored in the macOS Keychain only if you tick "記住金鑰" (remember key).
+2. Open the app and enter your OpenAI API key (create one at platform.openai.com/api-keys). To use Google Gemini instead, switch the provider under Settings → 「AI 服務」 to Google Gemini and enter a Gemini API key (create one in Google AI Studio at aistudio.google.com/apikey; the free tier works). Keys are verified right away, including access to each model; they're stored in the macOS Keychain only if you tick "記住金鑰" (remember key).
 3. Pick the mode and languages, and check the input level in 設定 > 收音 > 測試麥克風 (Settings > Audio > Test microphone). Add **keywords** (speaker and product names, jargon) and a one-line **context** to improve accuracy.
 4. Press 開始 (Start), or Space.
 
@@ -167,7 +168,7 @@ flowchart LR
 | macOS app | Swift static server (`127.0.0.1`, static files only) | Native Swift, via `WKScriptMessageHandlerWithReply` | Static files only, Host-checked |
 | Browser (`npm start`) | Node dev server | Node, behind a per-launch token | Host / Origin / token-checked |
 
-Both backends implement the same rules from [`public/realtime-config.json`](public/realtime-config.json) (models, languages, limits). `tests/contract.test.mjs` compiles the Swift version and checks that both produce identical OpenAI requests and validation errors.
+Both backends implement the same rules from [`public/realtime-config.json`](public/realtime-config.json) (models, languages, limits). `tests/contract.test.mjs` compiles the Swift version and checks that both produce identical OpenAI and Gemini requests and validation errors.
 
 ### Audio pipeline
 
@@ -186,14 +187,35 @@ flowchart LR
   Store --> Feed["Sharing"]
 ```
 
+### Two providers
+
+| | OpenAI | Google Gemini |
+|---|---|---|
+| Translation | `gpt-realtime-translate` | `gemini-3.5-live-translate-preview` (preview) |
+| Source transcript | `gpt-live-transcribe` | `gemini-3.5-transcribe-live` |
+| Smart line breaks | `gpt-4.1-mini` | `gemini-3.5-flash-lite` |
+| Transport | Translation over WebRTC (system audio over the app's WebSocket), source over WebSocket | Both over WebSocket (Live API) |
+| Longest connection | 60 minutes (renewed at 55) | About 10 minutes (renewed at 8, or on `goAway`) |
+| Bilingual captions, one hour (list prices) | About US$3.10 | About US$2.80, plus a free tier |
+
+Switching providers changes nothing else: captions, floating captions, sharing, the transcript and exports all consume the same events.
+
+**OpenAI**
 - **Source**: `gpt-live-transcribe` runs as a Realtime transcription session over WebSocket. It has no server-side VAD, so a client-side VAD commits each sentence when the speaker pauses; long turns are cut at a pause after 15 seconds. Supports `languages`, `delay` (five steps from fastest to most accurate), `keywords` and `prompt`.
 - **Translation**: `gpt-realtime-translate` detects the spoken language and outputs the chosen language (it can also play translated speech). The microphone goes over WebRTC with a short-lived client secret; system audio is already inside the app, so it goes over the app's own WebSocket and avoids networks that block UDP.
 - **Resilience**: each connection reconnects on its own with exponential backoff. Realtime sessions end after 60 minutes, so at 55 minutes a new connection is set up and audio switches over seamlessly; Stop sends `session.close` and waits for the last sentence.
 
+**Google Gemini (Live API)**
+- **Tokens**: the backend trades the key for a single-use ephemeral token (`POST /v1beta/auth_tokens`) with the whole session setup — model, languages, transcription options — locked into it. The page connects to `BidiGenerateContentConstrained` with that token; it never sees the key and can't change the setup.
+- **Audio**: the app captures at 24 kHz; for Gemini it's low-pass filtered and downsampled to 16 kHz PCM16, sent 100 ms at a time.
+- **Translation**: one connection returns translated speech plus transcripts of the original and the translation (`inputTranscription` / `outputTranscription`). Speech that's already in the target language is passed through (`echoTargetLanguage`), so no captions go missing.
+- **Source**: `SMART` mode adds punctuation and drops filler words; keywords become custom vocabulary (`customVocabulary`). Interim hypotheses (`interimInputTranscription`) show live, and when the app's VAD hears the speaker stop it sends `audioStreamEnd` so Gemini finalizes right away.
+- **Resilience**: Gemini closes a connection after about 10 minutes, so at 8 minutes (or on `goAway`) a new one is set up and audio switches over while the old one finishes its last sentence; dropped connections reconnect automatically.
+
 ### Captions and transcript
 
 - Source and translation are separate timed tracks; SRT export aligns them by overlap, so translation lag never shifts the source.
-- **Line breaks by meaning**: the translation model's Chinese often streams out with no punctuation, so a text model (`gpt-4.1-mini`) chooses the line breaks. While the translation streams, the app sends the phrase that hasn't been broken yet, with the line before it, and the model marks where each phrase ends — a finished statement, before a connective, after a sentence-final particle, a change of subject. It **only marks breaks and never changes the text**: the app maps every returned line back onto the original character by character and ignores answers that don't match. The last phrase may still be unfinished, so it stays open for the next round. One request per stream is in flight at a time; text that arrives meanwhile is sent when it returns.
+- **Line breaks by meaning**: the translation model's Chinese often streams out with no punctuation, so a text model (`gpt-4.1-mini`, or `gemini-3.5-flash-lite` with Gemini) chooses the line breaks. While the translation streams, the app sends the phrase that hasn't been broken yet, with the line before it, and the model marks where each phrase ends — a finished statement, before a connective, after a sentence-final particle, a change of subject. It **only marks breaks and never changes the text**: the app maps every returned line back onto the original character by character and ignores answers that don't match. The last phrase may still be unfinished, so it stays open for the next round. One request per stream is in flight at a time; text that arrives meanwhile is sent when it returns.
 - **Punctuation and pauses**: **a comma starts a new line** (so do semicolons and colons; not the enumeration comma 「、」 or numbers like `3,000` and `3:00`), but **never leaving a line under 10 characters** — a short 「對，」 stays with what follows, and the model's breaks and pause breaks follow the same rule. Also starting a new line are a *confirmed* sentence end (`3.` may still become `3.14`) and a translation pause of 0.9 s or more — right away, without waiting for the model.
 - **Fallback**: offline, without access to the model, or with 「智慧斷句」 (smart line breaks) turned off in Settings, rules take over: a long phrase is cut at its most natural point (before a connective, after a particle) at a word boundary found with `Intl.Segmenter` — never inside a word. Repeated failures switch to the fallback automatically, with one notice.
 - The main window, caption window, floating captions, audience phones and exported SRT all use the same lines; half-width commas in Chinese become full-width, and a line break replaces a trailing comma.
@@ -203,7 +225,7 @@ flowchart LR
 ### macOS native layer
 
 - Swift AppKit + WKWebView, compiled with `swiftc` into an arm64 + x86_64 universal binary and packaged with `pkgbuild` — about 4 MB.
-- The page is served by a local static server written with `Network.framework` (`127.0.0.1`; other Host headers are rejected against DNS rebinding). The OpenAI key exists only on the native side.
+- The page is served by a local static server written with `Network.framework` (`127.0.0.1`; other Host headers are rejected against DNS rebinding). The OpenAI and Gemini keys exist only on the native side.
 - System audio: a process tap and aggregate device (`CATapDescription`, `AudioHardwareCreateProcessTap`), rebuilt automatically when the output device changes.
 - Floating captions: a non-activating `NSPanel` (status-bar level, on all Spaces, full-screen auxiliary). The font size is derived from the window height; whole sentences are laid out and the oldest dropped first.
 
@@ -253,13 +275,13 @@ Locally (`wrangler dev`), 2,000 viewers got 100% of updates, 95% within 65 ms. R
 npm run relay:load-test -- --url https://klt-relay.<your-name>.workers.dev --viewers 1000 --seconds 30
 ```
 
-**Cost**: OpenAI bills the speaker's audio only, regardless of how many people watch (smart line breaks add a few text-model tokens, about US$0.50–1 for an hour-long talk, and can be turned off in Settings). Cloudflare's free plan allows 100,000 requests a day; an hour-long talk with 1,000 viewers uses a small fraction of that.
+**Cost**: OpenAI and Gemini bill the speaker's audio only, regardless of how many people watch (smart line breaks add a few text-model tokens — about US$0.50–1 for an hour-long talk with OpenAI, less with Gemini — and can be turned off in Settings). Cloudflare's free plan allows 100,000 requests a day; an hour-long talk with 1,000 viewers uses a small fraction of that.
 
 ## Security and privacy
 
-- **OpenAI key**: entered at runtime, never built into the app; kept in memory by default and in the macOS Keychain only if you opt in; used only to mint short-lived Realtime client secrets, so the page never sees the long-lived key.
+- **OpenAI and Gemini keys**: entered at runtime, never built into the app; kept in memory by default and in the macOS Keychain only if you opt in (one entry each); used only to mint short-lived Realtime client secrets or single-use Gemini tokens, so the page never sees a long-lived key.
 - **Local services**: the dev server checks `Host` (DNS rebinding), `Origin`, `Content-Type` and a per-launch token; the macOS app exposes no API at all and only accepts messages from its own page.
-- **Content-Security-Policy**: the page may connect only to OpenAI and the relay you configured.
+- **Content-Security-Policy**: the page may connect only to OpenAI, the Gemini Live API and the relay you configured.
 - **Sharing**:
   - Only an app holding the publish key can open rooms; each room also has its own host token (the relay stores only its hash).
   - Viewer connections are receive-only; anything they send is ignored.
@@ -273,9 +295,9 @@ Every push runs automatically on GitHub Actions (Linux and macOS):
 
 | Tests | Coverage |
 |---|---|
-| **Node unit and integration tests (115)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), line breaks by meaning (alignment, request scheduling, fallback rules), the share publisher, room logic, the QR encoder |
+| **Node unit and integration tests (129)** | Text handling, Chinese conversion, transcript and SRT, settings, dev-server security, the session controller (reconnect, rotation, cancellation), Gemini connections (tokens, downsampling, event mapping, renewal), line breaks by meaning (alignment, request scheduling, fallback rules), the share publisher, room logic, the QR encoder |
 | **Swift ↔ Node contract test** | Compiles the native backend and checks both produce identical results for the same inputs |
-| **macOS end-to-end checks (54)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
+| **macOS end-to-end checks (59)** | The real UI and native bridge in an offscreen WKWebView: system audio, floating-caption layout, provider switching, sharing settings and CSP, setup links, QR codes decoded with Apple's Vision |
 | **Relay end-to-end tests (8) + load test** | The real Worker in `wrangler dev` (workerd): auth, fan-out, receive-only viewers, host reconnection and resync; CI also runs 300 simulated viewers |
 
 ## Development
@@ -302,6 +324,8 @@ The dev server picks up a relay from `KLT_RELAY_URL` and `KLT_RELAY_KEY`.
 ```text
 public/             UI (ES modules, no framework, no build step)
   js/session.js       connections, reconnection, rotation, VAD commits
+  js/gemini.js        Gemini Live API connections (tokens, 16 kHz audio, event mapping)
+  js/segmenter.js     line breaks by meaning (request scheduling, alignment)
   js/transcript.js    transcript data (timeline, sentence splitting)
   js/share*.js        share publisher and share panel
   js/qr.js            QR code encoder

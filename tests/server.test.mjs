@@ -6,6 +6,8 @@ import { startServer } from "../server/index.mjs";
 // OpenAI is stubbed: the server calls the global fetch, the tests talk to the server with node:http.
 const upstreamCalls = [];
 let modelStatus = 200;
+let geminiModelStatus = 200;
+const GEMINI_KEY = "AIzaSyTest-0123456789abcdefghijklmnopq";
 let segmentReply = { status: 200, body: { choices: [{ message: { content: "儘管前期人頭一直往下掉\n所以他的大樹" } }] } };
 const RELAY_KEY = "kltp_test_0123456789abcdefghijklmnopqrstuvwxyz";
 let relaySocketUrl = "wss://relay.test/api/rooms/abcdefghjkmn/host";
@@ -16,6 +18,12 @@ globalThis.fetch = async (url, init = {}) => {
     if (init.headers?.Authorization !== `Bearer ${RELAY_KEY}`) return Response.json({ error: "發佈金鑰不正確。" }, { status: 401 });
     if (String(url).endsWith("/api/verify")) return Response.json({ ok: true });
     return Response.json({ room: "abcdefghjkmn", hostToken: "host-token", viewerUrl: "https://relay.test/r/abcdefghjkmn", socketUrl: relaySocketUrl });
+  }
+  if (String(url).startsWith("https://generativelanguage.googleapis.com/")) {
+    if (init.headers?.["x-goog-api-key"] !== GEMINI_KEY) return Response.json({ error: { message: "API key not valid." } }, { status: 400 });
+    if (String(url).endsWith("/auth_tokens")) return Response.json({ name: "auth_tokens/test-token" });
+    if (String(url).endsWith(":generateContent")) return Response.json({ candidates: [{ content: { parts: [{ text: "儘管前期人頭一直往下掉\n所以他的大樹" }] } }] });
+    return new Response("{}", { status: geminiModelStatus });
   }
   if (String(url).includes("/models/")) return new Response("{}", { status: modelStatus });
   if (String(url).endsWith("/chat/completions")) return Response.json(segmentReply.body, { status: segmentReply.status });
@@ -169,6 +177,42 @@ test("smart line breaks: the open phrase goes to the text model, its lines come 
   assert.equal(invalid.status, 400);
 });
 
+test("Gemini: the key is checked with Google, then tokens are locked to the session setup", async () => {
+  const save = (apiKey) => call({ method: "POST", path: "/api/gemini/key", auth: true, headers: json, body: { apiKey } });
+  assert.equal((await save("sk-not-a-gemini-key-000000000000")).status, 400);
+  const rejected = await save("AIzaSyWrong-0123456789abcdefghijklmnopq");
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.json.error, /拒絕/);
+  assert.equal((await call({ method: "POST", path: "/api/gemini/translation-token", auth: true, headers: json, body: {} })).status, 401);
+
+  geminiModelStatus = 404;
+  const warned = await save(GEMINI_KEY);
+  assert.equal(warned.status, 200);
+  assert.ok(warned.json.warnings.some((warning) => warning.includes("gemini-3.5-live-translate-preview")));
+  geminiModelStatus = 200;
+  assert.equal((await call({ path: "/api/health", auth: true })).json.gemini.hasKey, true);
+
+  const translation = await call({ method: "POST", path: "/api/gemini/translation-token", auth: true, headers: json, body: { targetLanguage: "zh" } });
+  assert.equal(translation.status, 200);
+  assert.equal(translation.json.token, "auth_tokens/test-token");
+  assert.deepEqual(translation.json.setup.generationConfig.translationConfig, { targetLanguageCode: "zh-Hant", echoTargetLanguage: true });
+  const tokenCall = upstreamCalls.at(-1);
+  assert.equal(tokenCall.url, "https://generativelanguage.googleapis.com/v1beta/auth_tokens");
+  assert.equal(tokenCall.body.uses, 1);
+  assert.deepEqual(tokenCall.body.bidiGenerateContentSetup, translation.json.setup, "the token is locked to the setup the page sends");
+  assert.ok(Date.parse(tokenCall.body.newSessionExpireTime) > Date.now());
+
+  const transcription = await call({ method: "POST", path: "/api/gemini/transcription-token", auth: true, headers: json, body: { sourceLanguage: "en", keywords: "FlyQuest\nKarsa" } });
+  assert.deepEqual(transcription.json.setup.inputAudioTranscription, { languageCodes: ["en-US"], mode: "SMART", customVocabulary: ["FlyQuest", "Karsa"] });
+
+  const lines = await call({ method: "POST", path: "/api/segment", auth: true, headers: json, body: { provider: "gemini", language: "zh", text: "儘管前期人頭一直往下掉所以他的大樹" } });
+  assert.deepEqual(lines.json.lines, ["儘管前期人頭一直往下掉", "所以他的大樹"]);
+  assert.match(upstreamCalls.at(-1).url, /models\/gemini-3\.5-flash-lite:generateContent$/);
+
+  assert.equal((await call({ method: "DELETE", path: "/api/gemini/key", auth: true })).status, 200);
+  assert.equal((await call({ path: "/api/health", auth: true })).json.gemini.hasKey, false);
+});
+
 test("deleting the key", async () => {
   assert.equal((await call({ method: "DELETE", path: "/api/key", auth: true })).status, 200);
   assert.equal((await call({ path: "/api/health", auth: true })).json.hasApiKey, false);
@@ -194,7 +238,7 @@ test("sharing: the relay is verified before it's saved, and the page may then co
   const health = await call({ path: "/api/health", auth: true });
   assert.deepEqual(health.json.share, { configured: true, origin: "https://relay.test" });
   const page = await call({ path: "/" });
-  assert.match(page.headers["content-security-policy"], /connect-src 'self' https:\/\/api\.openai\.com wss:\/\/api\.openai\.com https:\/\/relay\.test wss:\/\/relay\.test;/);
+  assert.match(page.headers["content-security-policy"], /connect-src 'self' https:\/\/api\.openai\.com wss:\/\/api\.openai\.com wss:\/\/generativelanguage\.googleapis\.com https:\/\/relay\.test wss:\/\/relay\.test;/);
 });
 
 test("sharing: rooms are created with the publish key and checked", async () => {

@@ -116,7 +116,9 @@ export function validateSegmentRequest(body, config) {
   if (text.length > config.segmentation.textMaxChars) throw new ValidationError("要斷句的文字太長。");
   const context = stringOr(body?.context, "").trim();
   if (context.length > config.segmentation.contextMaxChars) throw new ValidationError("前文太長。");
-  return { language, text, context };
+  const provider = stringOr(body?.provider, "openai");
+  if (!config.providers.includes(provider)) throw new ValidationError("不支援的服務商。");
+  return { provider, language, text, context };
 }
 
 export function buildSegmentRequest({ text, context }, config) {

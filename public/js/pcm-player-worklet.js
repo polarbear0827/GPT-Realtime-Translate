@@ -1,11 +1,13 @@
-// Plays PCM chunks pushed from the main thread (system audio captured natively) into the audio graph,
-// so they can feed a MediaStreamAudioDestinationNode → WebRTC track for the translation session.
-// Keeps a small jitter buffer, caps latency, and resamples when the context isn't 24 kHz.
+// Plays PCM chunks pushed from the main thread into the audio graph: system audio captured natively
+// (→ MediaStreamAudioDestinationNode → WebRTC track for the translation session), or translated speech
+// from Gemini. Keeps a small jitter buffer, caps latency (`maxBufferSeconds`: system audio stays live,
+// speech that arrives faster than it plays is queued), and resamples when the context isn't 24 kHz.
 
 class PcmPlayerProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.inputRate = options.processorOptions?.inputRate ?? 24000;
+    this.maxBuffer = this.inputRate * (options.processorOptions?.maxBufferSeconds ?? 0.5);
     this.step = this.inputRate / sampleRate;
     this.chunks = [];
     this.head = 0;
@@ -15,9 +17,8 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
     this.port.onmessage = ({ data }) => {
       this.chunks.push(data);
       this.available += data.length;
-      // Never fall more than half a second behind: drop the oldest audio instead.
-      const limit = this.inputRate / 2;
-      if (this.available > limit) this.drop(this.available - this.inputRate / 5);
+      // Never fall further behind than maxBufferSeconds: drop the oldest audio instead.
+      if (this.available > this.maxBuffer) this.drop(this.available - this.maxBuffer * 0.4);
     };
   }
 

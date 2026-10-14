@@ -391,3 +391,102 @@ test("smart breaks can be turned off", async () => {
   assert.equal(requests.length, 1);
   await controller.stop();
 });
+
+// Gemini: same session flow, different clients and secrets.
+class FakeGemini {
+  constructor(options) {
+    Object.assign(this, options, { closed: null, appended: [], commits: [], audioEnabled: null });
+    (options.kind === "translate" ? translates : transcribes).push(this);
+  }
+  get isOpen() {
+    return this.connected && !this.closed;
+  }
+  async connect(secret, { audioEnabled = true } = {}) {
+    this.secret = secret;
+    this.audioEnabled = audioEnabled;
+    this.connected = true;
+  }
+  append(pcm) {
+    this.appended.push(pcm);
+    return true;
+  }
+  commit(turn) {
+    this.commits.push(turn);
+    return true;
+  }
+  setAudioEnabled(enabled) {
+    this.audioEnabled = enabled;
+  }
+  setPlayAudio() {}
+  async close({ graceful }) {
+    this.closed = { graceful };
+  }
+}
+
+function geminiSetup(overrides = {}, extra = {}) {
+  const tokens = [];
+  const result = setup({ GeminiClient: FakeGemini, ...overrides }, extra);
+  Object.assign(result.controller.api, {
+    createGeminiTranslationToken: async (body) => {
+      tokens.push(["translate", body]);
+      return { token: "auth_tokens/t", setup: { model: "models/translate" } };
+    },
+    createGeminiTranscriptionToken: async (body) => {
+      tokens.push(["transcribe", body]);
+      return { token: "auth_tokens/s", setup: { model: "models/transcribe" } };
+    },
+  });
+  return { ...result, tokens };
+}
+
+test("Gemini: both tracks use Gemini tokens and clients, and translation gets the audio as PCM", async () => {
+  const { controller, store, tokens } = geminiSetup();
+  await controller.start(options("bilingual", { provider: "gemini", keywords: "FlyQuest" }));
+  assert.deepEqual(tokens, [
+    ["translate", { targetLanguage: "zh" }],
+    ["transcribe", { sourceLanguage: "en", keywords: "FlyQuest" }],
+  ]);
+  assert.equal(secretRequests.translation, 0, "no OpenAI client secret");
+  assert.equal(translates[0].kind, "translate");
+  assert.equal(transcribes[0].kind, "transcribe");
+  assert.deepEqual(translates[0].secret, { token: "auth_tokens/t", setup: { model: "models/translate" } });
+
+  const pcm = new Int16Array(1200).buffer;
+  audios[0].onChunk(pcm, 0.1, 0.2, performance.now());
+  assert.equal(translates[0].appended.length, 1);
+  assert.equal(transcribes[0].appended.length, 1);
+
+  translates[0].onEvent({ type: "output-delta", delta: "大家好。" });
+  transcribes[0].onEvent({ type: "partial", itemId: "gemini-0", text: "Hello" });
+  transcribes[0].onEvent({ type: "partial", itemId: "gemini-0", text: "Hello every" });
+  assert.deepEqual(store.track("source").map((entry) => [entry.text, entry.final]), [["Hello every", false]]);
+  transcribes[0].onEvent({ type: "completed", itemId: "gemini-0", transcript: "Hello everyone." });
+  assert.deepEqual(store.track("source").map((entry) => [entry.text, entry.final]), [["Hello everyone.", true]]);
+  assert.deepEqual(store.track("translation").map((entry) => entry.text), ["大家好。"]);
+  await controller.stop();
+});
+
+test("Gemini: system audio also goes over the WebSocket (no native OpenAI client)", async () => {
+  const { controller } = geminiSetup();
+  await controller.start(options("translation", { provider: "gemini", audioSource: "system" }));
+  assert.ok(translates[0] instanceof FakeGemini);
+  await controller.stop();
+});
+
+test("Gemini: goAway renews the connection; audio moves to the new one", async () => {
+  const { controller, tokens } = geminiSetup();
+  await controller.start(options("translation", { provider: "gemini" }));
+  const first = translates[0];
+  first.onState("expiring");
+  controller.tick(controller.run);
+  for (let index = 0; index < 5; index += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(tokens.filter(([kind]) => kind === "translate").length, 2);
+  const second = translates[1];
+  assert.equal(controller.run.translate, second);
+  assert.equal(second.audioEnabled, true);
+  assert.deepEqual(first.closed, { graceful: true });
+  audios[0].onChunk(new Int16Array(1200).buffer, 0.1, 0.2, performance.now());
+  assert.equal(second.appended.length, 1);
+  assert.equal(first.appended.length, 0);
+  await controller.stop();
+});

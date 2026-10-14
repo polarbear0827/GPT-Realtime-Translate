@@ -6,7 +6,7 @@
 export const TARGET_RATE = 24000;
 export const CHUNK_SAMPLES = 1200;
 
-class Biquad {
+export class Biquad {
   constructor(cutoff, rate) {
     const w0 = (2 * Math.PI * cutoff) / rate;
     const alpha = Math.sin(w0) / (2 * Math.SQRT1_2);

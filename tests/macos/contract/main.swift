@@ -6,6 +6,8 @@ let arguments = CommandLine.arguments
 let config = try RealtimeConfig.load(from: URL(fileURLWithPath: arguments[1]))
 let fixtures = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: arguments[2]))) as? [[String: Any]] ?? []
 let rules = RealtimeRules(config: config)
+let gemini = GeminiRules(rules: rules)
+let nowMs = Double(arguments[3]) ?? 0
 
 var results: [Any] = []
 for fixture in fixtures {
@@ -26,7 +28,20 @@ for fixture in fixtures {
         case "roomTitle":
             results.append(["ok": ShareRules.normalizeRoomTitle(fixture["value"])])
         case "segment":
-            results.append(["ok": rules.segmentRequest(try rules.validateSegment(body))])
+            let params = try rules.validateSegment(body)
+            results.append(["ok": params.provider == "gemini" ? gemini.segmentRequest(params) : rules.segmentRequest(params)])
+        case "geminiKey":
+            results.append(["ok": try GeminiRules.validateKeyFormat(fixture["value"])])
+        case "geminiTranslation":
+            results.append(["ok": try gemini.translationSetup(body)])
+        case "geminiTranscription":
+            results.append(["ok": try gemini.transcriptionSetup(body)])
+        case "geminiToken":
+            results.append(["ok": gemini.tokenRequest(setup: try gemini.translationSetup(body), nowMs: nowMs)])
+        case "geminiTokenResponse":
+            results.append(["ok": try GeminiRules.parseToken(fixture["value"])])
+        case "geminiSegmentResponse":
+            results.append(["ok": try GeminiRules.parseSegmentResponse(fixture["value"])])
         case "segmentResponse":
             results.append(["ok": try RealtimeRules.parseSegmentResponse(fixture["value"])])
         case "csp":

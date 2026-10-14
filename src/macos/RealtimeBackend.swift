@@ -11,6 +11,24 @@ struct RealtimeConfig: Decodable {
         let segmentation: String
     }
 
+    struct Gemini: Decodable {
+        struct Models: Decodable {
+            let translation: String
+            let transcription: String
+            let segmentation: String
+        }
+
+        struct Language: Decodable {
+            let translate: String
+            let transcribe: String
+        }
+
+        let models: Models
+        let tokenTtlSeconds: Int
+        let newSessionSeconds: Int
+        let languages: [String: Language]
+    }
+
     struct Segmentation: Decodable {
         let instructions: String
         let textMaxChars: Int
@@ -39,6 +57,8 @@ struct RealtimeConfig: Decodable {
     let noiseReductionTypes: [String]
     let defaults: Defaults
     let clientSecretTtlSeconds: Int
+    let providers: [String]
+    let gemini: Gemini
     let segmentation: Segmentation
     let limits: Limits
 
@@ -61,6 +81,7 @@ struct TranscriptionParams {
 }
 
 struct SegmentParams {
+    let provider: String
     let language: String
     let text: String
     let context: String
@@ -183,11 +204,17 @@ struct RealtimeRules {
         if text.utf16.count > config.segmentation.textMaxChars { throw BackendError(status: 400, message: "要斷句的文字太長。") }
         let context = stringOr(body["context"], "").trimmingCharacters(in: .whitespacesAndNewlines)
         if context.utf16.count > config.segmentation.contextMaxChars { throw BackendError(status: 400, message: "前文太長。") }
-        return SegmentParams(language: language, text: text, context: context)
+        let provider = stringOr(body["provider"], "openai")
+        guard config.providers.contains(provider) else { throw BackendError(status: 400, message: "不支援的服務商。") }
+        return SegmentParams(provider: provider, language: language, text: text, context: context)
+    }
+
+    static func segmentContent(_ params: SegmentParams) -> String {
+        params.context.isEmpty ? "Text:\n\(params.text)" : "Previous line:\n\(params.context)\n\nText:\n\(params.text)"
     }
 
     func segmentRequest(_ params: SegmentParams) -> [String: Any] {
-        let content = params.context.isEmpty ? "Text:\n\(params.text)" : "Previous line:\n\(params.context)\n\nText:\n\(params.text)"
+        let content = Self.segmentContent(params)
         return [
             "model": config.models.segmentation,
             "temperature": 0,
@@ -225,12 +252,102 @@ struct RealtimeRules {
     }
 }
 
+// Google Gemini (Live API). Same rules and payloads as server/gemini.mjs.
+struct GeminiRules {
+    let rules: RealtimeRules
+    var config: RealtimeConfig { rules.config }
+
+    static func validateKeyFormat(_ value: Any?) throws -> String {
+        let key = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard key.range(of: "^AIza[0-9A-Za-z_-]{30,}$", options: .regularExpression) != nil else {
+            throw BackendError(status: 400, message: "Gemini API key 格式不正確，應以 AIza 開頭。")
+        }
+        return key
+    }
+
+    private func language(_ code: String) throws -> RealtimeConfig.Gemini.Language {
+        guard let language = config.gemini.languages[code] else { throw BackendError(status: 400, message: "Gemini 不支援這個語言。") }
+        return language
+    }
+
+    func translationSetup(_ body: [String: Any]) throws -> [String: Any] {
+        let params = try rules.validateTranslation(body)
+        return [
+            "model": "models/\(config.gemini.models.translation)",
+            "generationConfig": [
+                "responseModalities": ["AUDIO"],
+                "translationConfig": ["targetLanguageCode": try language(params.targetLanguage).translate, "echoTargetLanguage": true],
+            ],
+            "inputAudioTranscription": [String: Any](),
+            "outputAudioTranscription": [String: Any](),
+        ]
+    }
+
+    func transcriptionSetup(_ body: [String: Any]) throws -> [String: Any] {
+        let params = try rules.validateTranscription(body)
+        var transcription: [String: Any] = ["languageCodes": [try language(params.sourceLanguage).transcribe], "mode": "SMART"]
+        if !params.keywords.isEmpty { transcription["customVocabulary"] = params.keywords }
+        return [
+            "model": "models/\(config.gemini.models.transcription)",
+            "generationConfig": ["responseModalities": ["TEXT"]],
+            "inputAudioTranscription": transcription,
+        ]
+    }
+
+    func tokenRequest(setup: [String: Any], nowMs: Double) -> [String: Any] {
+        [
+            "uses": 1,
+            "expireTime": Self.timestamp(nowMs + Double(config.gemini.tokenTtlSeconds) * 1000),
+            "newSessionExpireTime": Self.timestamp(nowMs + Double(config.gemini.newSessionSeconds) * 1000),
+            "bidiGenerateContentSetup": setup,
+        ]
+    }
+
+    /// Like JavaScript's Date.toISOString(): 2026-10-14T03:04:05.000Z.
+    static func timestamp(_ ms: Double) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
+    }
+
+    static func parseToken(_ json: Any?) throws -> String {
+        guard let token = (json as? [String: Any])?["name"] as? String, token.hasPrefix("auth_tokens/") else {
+            throw BackendError(status: 502, message: "Gemini 沒有回傳連線權杖。")
+        }
+        return token
+    }
+
+    func segmentRequest(_ params: SegmentParams) -> [String: Any] {
+        [
+            "systemInstruction": ["parts": [["text": config.segmentation.instructions]]],
+            "contents": [["role": "user", "parts": [["text": RealtimeRules.segmentContent(params)]]]],
+            "generationConfig": ["maxOutputTokens": 1024],
+        ]
+    }
+
+    static func parseSegmentResponse(_ json: Any?) throws -> [String] {
+        guard let candidates = (json as? [String: Any])?["candidates"] as? [[String: Any]],
+              let parts = (candidates.first?["content"] as? [String: Any])?["parts"] as? [Any] else {
+            throw BackendError(status: 502, message: "Gemini 回應格式錯誤。")
+        }
+        let text = parts.compactMap { part -> String? in
+            guard let part = part as? [String: Any], let text = part["text"] as? String, (part["thought"] as? Bool) != true else { return nil }
+            return text
+        }.joined()
+        return text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
 // Audience-sharing relay settings and the page's Content-Security-Policy. Same rules as server/share.mjs.
 enum ShareRules {
     static let roomTitleMaxChars = 80
 
     static func contentSecurityPolicy(relayOrigin: String?) -> String {
-        var connect = "'self' https://api.openai.com wss://api.openai.com"
+        var connect = "'self' https://api.openai.com wss://api.openai.com wss://generativelanguage.googleapis.com"
         if let relayOrigin { connect += " \(relayOrigin) \(websocketOrigin(relayOrigin))" }
         return "default-src 'self'; connect-src \(connect); media-src 'self' blob:; " +
             "img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; " +
@@ -297,12 +414,16 @@ enum ShareRules {
 @MainActor
 final class RealtimeBackend {
     private let rules: RealtimeRules
+    private let gemini: GeminiRules
     private let version: String
     private let session: URLSession
     private let keyStore: KeyStoring
+    private let geminiKeyStore: KeyStoring
     private let relayStore: KeyStoring
     private var apiKey: String?
     private var rememberedKey = false
+    private var geminiKey: String?
+    private var rememberedGeminiKey = false
     private var share: (origin: String, key: String)?
     /// The page may only connect to the configured relay; the host updates its CSP when this changes.
     var onShareOriginChange: ((String?) -> Void)?
@@ -312,11 +433,14 @@ final class RealtimeBackend {
         config: RealtimeConfig,
         version: String,
         keyStore: KeyStoring = KeychainStore(),
+        geminiKeyStore: KeyStoring = KeychainStore(account: "gemini-api-key", label: "Keynote Live Translator Gemini API key"),
         relayStore: KeyStoring = KeychainStore(account: "share-relay", label: "Keynote Live Translator 分享伺服器")
     ) {
         rules = RealtimeRules(config: config)
+        gemini = GeminiRules(rules: rules)
         self.version = version
         self.keyStore = keyStore
+        self.geminiKeyStore = geminiKeyStore
         self.relayStore = relayStore
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -325,6 +449,10 @@ final class RealtimeBackend {
         if let stored = keyStore.load() {
             apiKey = stored
             rememberedKey = true
+        }
+        if let stored = geminiKeyStore.load() {
+            geminiKey = stored
+            rememberedGeminiKey = true
         }
         if let stored = relayStore.load()?.data(using: .utf8),
            let saved = try? JSONSerialization.jsonObject(with: stored) as? [String: String],
@@ -344,6 +472,7 @@ final class RealtimeBackend {
                     "version": version,
                     "hasApiKey": apiKey != nil,
                     "rememberedKey": rememberedKey,
+                    "gemini": ["hasKey": geminiKey != nil, "rememberedKey": rememberedGeminiKey],
                     "share": ["configured": share != nil, "origin": (share?.origin as Any?) ?? NSNull()],
                 ])
             case ("POST", "/api/share/config"):
@@ -401,7 +530,35 @@ final class RealtimeBackend {
                 )
             case ("POST", "/api/segment"):
                 let params = try rules.validateSegment(body)
+                if params.provider == "gemini" {
+                    let data = try await geminiCall(
+                        path: "models/\(rules.config.gemini.models.segmentation):generateContent",
+                        body: gemini.segmentRequest(params),
+                        timeout: 6
+                    )
+                    return (200, ["lines": try GeminiRules.parseSegmentResponse(data)])
+                }
                 return try await segment(params)
+            case ("POST", "/api/gemini/key"):
+                let key = try GeminiRules.validateKeyFormat(body["apiKey"])
+                let warnings = try await verifyGemini(key: key)
+                geminiKey = key
+                if body["remember"] as? Bool ?? false {
+                    rememberedGeminiKey = geminiKeyStore.save(key)
+                } else {
+                    geminiKeyStore.delete()
+                    rememberedGeminiKey = false
+                }
+                return (200, ["ok": true, "remembered": rememberedGeminiKey, "warnings": warnings])
+            case ("DELETE", "/api/gemini/key"):
+                geminiKey = nil
+                rememberedGeminiKey = false
+                geminiKeyStore.delete()
+                return (200, ["ok": true])
+            case ("POST", "/api/gemini/translation-token"):
+                return try await geminiToken(setup: try gemini.translationSetup(body))
+            case ("POST", "/api/gemini/transcription-token"):
+                return try await geminiToken(setup: try gemini.transcriptionSetup(body))
             default:
                 return (404, ["error": "Not found."])
             }
@@ -443,6 +600,41 @@ final class RealtimeBackend {
         } catch {
             throw BackendError(status: 502, message: "無法連線到 OpenAI，請檢查網路。")
         }
+    }
+
+    // Same as geminiCall() in server/index.mjs: POST to the Gemini API with the key.
+    private func geminiCall(path: String, body: [String: Any], timeout: TimeInterval) async throws -> Any {
+        guard let geminiKey else { throw BackendError(status: 401, message: "尚未設定 Gemini API key。") }
+        var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/\(path)")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue(geminiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            throw BackendError(status: 504, message: "Gemini 回應逾時。")
+        } catch {
+            throw BackendError(status: 502, message: "無法連線到 Gemini，請檢查網路。")
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 502
+        let json = try? JSONSerialization.jsonObject(with: data)
+        guard (200..<300).contains(status) else {
+            let message = ((json as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+            throw BackendError(status: status, message: message ?? "Gemini 回應錯誤（\(status)）。")
+        }
+        return json ?? [:]
+    }
+
+    // A single-use ephemeral token locked to `setup`; the page sends the same setup when it connects.
+    private func geminiToken(setup: [String: Any]) async throws -> (Int, Any) {
+        guard geminiKey != nil else { throw BackendError(status: 401, message: "尚未設定 Gemini API key。") }
+        let request = gemini.tokenRequest(setup: setup, nowMs: Date().timeIntervalSince1970 * 1000)
+        let data = try await geminiCall(path: "auth_tokens", body: request, timeout: 15)
+        return (200, ["token": try GeminiRules.parseToken(data), "setup": setup])
     }
 
     // Same as segment() in server/index.mjs.
@@ -505,6 +697,42 @@ final class RealtimeBackend {
             }
         }
         return json
+    }
+
+    // Same checks as verifyGeminiKey() in server/index.mjs.
+    private func verifyGemini(key: String) async throws -> [String] {
+        let models = rules.config.gemini.models
+        var statuses: [(String, Int)] = []
+        await withTaskGroup(of: (String, Int).self) { group in
+            for model in [models.translation, models.transcription, models.segmentation] {
+                group.addTask { [session] in
+                    var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model)")!)
+                    request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+                    request.timeoutInterval = 10
+                    let status = (try? await session.data(for: request)).flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
+                    return (model, status)
+                }
+            }
+            for await result in group { statuses.append(result) }
+        }
+        if statuses.contains(where: { $0.1 == 400 || $0.1 == 401 }) {
+            throw BackendError(status: 400, message: "Google 拒絕這把金鑰（無效或已撤銷）。")
+        }
+        var warnings: [String] = []
+        for (model, status) in statuses.sorted(by: { $0.0 < $1.0 }) {
+            let warning: String?
+            switch status {
+            case 0: warning = "暫時無法連線到 Google 驗證金鑰，已先儲存。"
+            case 403, 404:
+                warning = model == models.segmentation
+                    ? "這把金鑰目前無法使用 \(model)，智慧斷句會改用一般斷句。"
+                    : "這把金鑰目前無法使用 \(model)。"
+            case 400...: warning = "驗證 \(model) 時 Google 回應 \(status)。"
+            default: warning = nil
+            }
+            if let warning, !warnings.contains(warning) { warnings.append(warning) }
+        }
+        return warnings
     }
 
     // Same checks as verifyApiKey() in server/index.mjs.

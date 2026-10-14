@@ -8,7 +8,7 @@ export const PUBLISH_KEY_PATTERN = /^kltp_[A-Za-z0-9_-]{32,96}$/;
 export const ROOM_TITLE_MAX_CHARS = 80;
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-const BASE_CONNECT_SOURCES = "'self' https://api.openai.com wss://api.openai.com";
+const BASE_CONNECT_SOURCES = "'self' https://api.openai.com wss://api.openai.com wss://generativelanguage.googleapis.com";
 
 export function contentSecurityPolicy(relayOrigin = null) {
   const relay = relayOrigin ? ` ${relayOrigin} ${relayOrigin.replace(/^http/, "ws")}` : "";

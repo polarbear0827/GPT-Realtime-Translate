@@ -4,10 +4,13 @@
 // - Each connection reconnects on its own with backoff, and is rotated before the 60-minute
 //   Realtime session limit without dropping audio.
 // - gpt-live-transcribe has no server VAD, so speech turns are committed from a client-side VAD.
+// - With Google Gemini as the provider, both tracks use the Gemini Live API instead (gemini.js): the
+//   same events, audio sent as PCM for translation too, and connections renewed every few minutes.
 // - Streamed captions are broken into phrases by meaning (segmenter.js) unless smart breaks are off.
 
 import * as defaultApi from "./api.js";
 import { AudioInput, CHUNK_MS } from "./audio.js";
+import { GeminiLiveClient } from "./gemini.js";
 import { NativeTranslateClient } from "./native-translate.js";
 import { TranscribeClient, TranslateClient, delay as defaultDelay } from "./realtime.js";
 import { PhraseSegmenter } from "./segmenter.js";
@@ -15,6 +18,8 @@ import { SystemAudioInput } from "./system-audio.js";
 import { VoiceActivityDetector } from "./vad.js";
 
 const ROTATE_AFTER_MS = 55 * 60 * 1000;
+// Gemini Live connections last about 10 minutes (the service also warns with goAway).
+const GEMINI_ROTATE_AFTER_MS = 8 * 60 * 1000;
 const ROTATE_RETRY_MS = 60 * 1000;
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_TURN_MS = 15_000;
@@ -50,6 +55,7 @@ export class SessionController {
     this.NativeTranslateClient = deps.NativeTranslateClient ?? NativeTranslateClient;
     this.TranslateClient = deps.TranslateClient ?? TranslateClient;
     this.TranscribeClient = deps.TranscribeClient ?? TranscribeClient;
+    this.GeminiClient = deps.GeminiClient ?? GeminiLiveClient;
     this.delay = deps.delay ?? defaultDelay;
     this.store = store;
     this.feed = feed ?? null;
@@ -106,12 +112,15 @@ export class SessionController {
     const needTranslate = options.mode !== "source";
     const needTranscribe = options.mode === "source" || (options.mode === "bilingual" && options.bilingualEngine === "dual");
     const systemAudio = options.audioSource === "system";
+    const gemini = options.provider === "gemini";
     const run = {
       // Translated speech playing on this Mac would be captured again as system audio.
       options: systemAudio ? { ...options, playAudio: false } : options,
       systemAudio,
+      gemini,
       // System audio is already in the app: translate it over the app's own WebSocket (no WebRTC).
-      nativeTranslate: systemAudio && this.NativeTranslateClient.supported,
+      // Gemini always gets audio over a WebSocket.
+      nativeTranslate: systemAudio && !gemini && this.NativeTranslateClient.supported,
       sawSignal: false,
       signalWarned: false,
       needTranslate,
@@ -155,7 +164,7 @@ export class SessionController {
       const [, translateSecret, transcribeSecret] = await Promise.all([
         run.audio.open({ deviceId: options.deviceId, processing: options.micProcessing, muteSource: options.muteSystemAudio }),
         needTranslate ? this.translationSecret(run) : null,
-        needTranscribe ? this.api.createTranscriptionSecret(transcriptionParams(options)) : null,
+        needTranscribe ? this.transcriptionSecret(run) : null,
       ]);
       this.check(run);
       this.setStatus("starting", "連線到 OpenAI");
@@ -208,7 +217,7 @@ export class SessionController {
   createSegmenter(run, options) {
     if (typeof this.api.segmentText !== "function") return null;
     const segmenter = new PhraseSegmenter({
-      request: (body) => this.api.segmentText(body),
+      request: (body) => this.api.segmentText({ ...body, provider: options.provider === "gemini" ? "gemini" : "openai" }),
       read: (key) => this.openPhrase(key),
       apply: (key, heads) => {
         if (run !== this.run) return;
@@ -263,13 +272,25 @@ export class SessionController {
   // ---- connections -------------------------------------------------------------------------
 
   // The native WebSocket client authenticates with the app's key and needs no client secret.
+  // Gemini connections get { token, setup } instead.
   translationSecret(run) {
+    if (run.gemini) return this.api.createGeminiTranslationToken({ targetLanguage: run.options.targetLanguage });
     return run.nativeTranslate ? Promise.resolve(null) : this.api.createTranslationSecret(translationParams(run.options));
   }
 
+  transcriptionSecret(run) {
+    if (run.gemini) return this.api.createGeminiTranscriptionToken({ sourceLanguage: run.options.sourceLanguage, keywords: run.options.keywords });
+    return this.api.createTranscriptionSecret(transcriptionParams(run.options));
+  }
+
+  rotateAfter(run) {
+    return run.gemini ? GEMINI_ROTATE_AFTER_MS : ROTATE_AFTER_MS;
+  }
+
   createTranslateClient(run) {
-    const Client = run.nativeTranslate ? this.NativeTranslateClient : this.TranslateClient;
+    const Client = run.gemini ? this.GeminiClient : run.nativeTranslate ? this.NativeTranslateClient : this.TranslateClient;
     const client = new Client({
+      kind: "translate",
       track: run.audio.track,
       playAudio: run.options.playAudio,
       targetLanguage: run.options.targetLanguage,
@@ -278,6 +299,7 @@ export class SessionController {
         if (run !== this.run || run.cancelled || client !== run.translate) return;
         if (state === "interrupted") this.setConnection("translate", "reconnecting");
         else if (state === "live") this.setConnection("translate", "live");
+        else if (state === "expiring") run.nextRotation.translate = 0;
         else if (state === "failed") this.reconnect(run, "translate", message);
       },
     });
@@ -285,11 +307,14 @@ export class SessionController {
   }
 
   createTranscribeClient(run) {
-    const client = new this.TranscribeClient({
+    const Client = run.gemini ? this.GeminiClient : this.TranscribeClient;
+    const client = new Client({
+      kind: "transcribe",
       onEvent: (event) => this.handleTranscribeEvent(run, event),
       onState: (state, message) => {
         if (run !== this.run || run.cancelled || client !== run.transcribe) return;
-        if (state === "failed") this.reconnect(run, "transcribe", message);
+        if (state === "expiring") run.nextRotation.transcribe = 0;
+        else if (state === "failed") this.reconnect(run, "transcribe", message);
       },
     });
     return client;
@@ -309,7 +334,7 @@ export class SessionController {
       throw error;
     }
     this.setConnection("translate", "live");
-    run.nextRotation.translate = performance.now() + ROTATE_AFTER_MS;
+    run.nextRotation.translate = performance.now() + this.rotateAfter(run);
   }
 
   async attachTranscribe(run, secret) {
@@ -328,7 +353,7 @@ export class SessionController {
     // Audio captured while connecting is replayed so the first words aren't lost.
     for (const chunk of run.pendingAudio.splice(0)) client.append(chunk);
     this.setConnection("transcribe", "live");
-    run.nextRotation.transcribe = performance.now() + ROTATE_AFTER_MS;
+    run.nextRotation.transcribe = performance.now() + this.rotateAfter(run);
   }
 
   async reconnect(run, name, reason) {
@@ -346,7 +371,7 @@ export class SessionController {
     for (let attempt = 0; !run.cancelled; attempt += 1) {
       try {
         if (name === "translate") await this.attachTranslate(run, await this.translationSecret(run));
-        else await this.attachTranscribe(run, await this.api.createTranscriptionSecret(transcriptionParams(run.options)));
+        else await this.attachTranscribe(run, await this.transcriptionSecret(run));
         this.onNotice("success", `${LABELS[name]}連線已恢復。`);
         break;
       } catch (error) {
@@ -381,7 +406,7 @@ export class SessionController {
       await next.setAudioEnabled(true);
       run.translate = next;
       previous.close({ graceful: true });
-      run.nextRotation.translate = performance.now() + ROTATE_AFTER_MS;
+      run.nextRotation.translate = performance.now() + this.rotateAfter(run);
     } catch (error) {
       if (!(error instanceof Cancelled)) run.nextRotation.translate = performance.now() + ROTATE_RETRY_MS;
     } finally {
@@ -393,7 +418,7 @@ export class SessionController {
   async rotateTranscribe(run) {
     run.rotating.transcribe = true;
     try {
-      const secret = await this.api.createTranscriptionSecret(transcriptionParams(run.options));
+      const secret = await this.transcriptionSecret(run);
       this.check(run);
       const next = this.createTranscribeClient(run);
       try {
@@ -422,7 +447,7 @@ export class SessionController {
     run.nextTranscribe = null;
     const previous = run.transcribe;
     run.transcribe = next;
-    run.nextRotation.transcribe = performance.now() + ROTATE_AFTER_MS;
+    run.nextRotation.transcribe = performance.now() + this.rotateAfter(run);
     previous?.close({ graceful: true });
   }
 
@@ -441,6 +466,8 @@ export class SessionController {
         this.onNotice("silence-cleared", "");
       }
     }
+    // Gemini translates PCM sent over its WebSocket (OpenAI takes the audio track instead).
+    if (run.gemini && run.needTranslate && !run.reconnecting.translate) run.translate?.append(pcm);
     if (!run.needTranscribe) return;
 
     const client = run.transcribe;
@@ -495,6 +522,22 @@ export class SessionController {
             language,
             startMs: rel(run.itemStarts.get(event.itemId)),
             delta: event.delta,
+          }),
+        );
+        this.onCaptions();
+        break;
+      }
+      // Gemini: the current hypothesis for the utterance, replacing the previous one.
+      case "partial": {
+        run.deltaSinceCommit = true;
+        run.lastDeltaAt = performance.now();
+        if (!run.itemStarts.has(event.itemId)) run.itemStarts.set(event.itemId, run.turn?.startPerf ?? performance.now() - 1500);
+        this.record((store, rel) =>
+          store.upsertItem(event.itemId, {
+            track: "source",
+            language,
+            startMs: rel(run.itemStarts.get(event.itemId)),
+            partial: event.text,
           }),
         );
         this.onCaptions();

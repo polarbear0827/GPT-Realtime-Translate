@@ -29,6 +29,31 @@
     "transcriptionDelay": "low",
     "noiseReduction": "near_field"
   },
+  "providers": ["openai", "gemini"],
+  "gemini": {
+    "models": {
+      "translation": "gemini-3.5-live-translate-preview",
+      "transcription": "gemini-3.5-transcribe-live",
+      "segmentation": "gemini-3.5-flash-lite"
+    },
+    "tokenTtlSeconds": 1800,
+    "newSessionSeconds": 60,
+    "languages": {
+      "en": { "translate": "en", "transcribe": "en-US" },
+      "zh": { "translate": "zh-Hant", "transcribe": "cmn-Hans-CN" },
+      "ja": { "translate": "ja", "transcribe": "ja-JP" },
+      "ko": { "translate": "ko", "transcribe": "ko-KR" },
+      "es": { "translate": "es", "transcribe": "es-419" },
+      "fr": { "translate": "fr", "transcribe": "fr-FR" },
+      "de": { "translate": "de", "transcribe": "de-DE" },
+      "pt": { "translate": "pt-BR", "transcribe": "pt-BR" },
+      "it": { "translate": "it", "transcribe": "it-IT" },
+      "ru": { "translate": "ru", "transcribe": "ru-RU" },
+      "hi": { "translate": "hi", "transcribe": "hi-IN" },
+      "id": { "translate": "id", "transcribe": "id-ID" },
+      "vi": { "translate": "vi", "transcribe": "vi-VN" }
+    }
+  },
   "clientSecretTtlSeconds": 600,
   "segmentation": {
     "instructions": "You split live subtitles into lines. The text is speech translated in real time: it often has no punctuation, and it may stop in the middle of a phrase because more is still arriving.\nPut each natural phrase on its own line, breaking by meaning and tone the way a speaker pauses: after a comma, semicolon or colon, where a statement ends, before a new clause or a change of subject, before connectives (所以, 但是, 然後, 因為, 如果, and, but, so, because), after sentence-final particles (了, 吧, 呢, 啊), and after questions and exclamations. Each line should read as one complete thought. Never make a line shorter than 10 characters (punctuation doesn't count): keep a short piece such as \"對，\" or \"Yes,\" together with what follows. Never break inside a word, a name or a number, or between a verb and its object. Split long sentences at their clauses.\nThe last line may be unfinished: leave it as it is.\nReturn the text exactly as given (the same characters in the same order, nothing added, removed, translated or corrected) with a line break between phrases. If a previous line is given, it is context only: do not output it. Output only the lines.",

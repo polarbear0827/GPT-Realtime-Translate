@@ -40,7 +40,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
 
     func run(publicDir: URL) {
         let config = try! RealtimeConfig.load(from: publicDir.appendingPathComponent("realtime-config.json"))
-        let backend = RealtimeBackend(config: config, version: "0.0.0-test", keyStore: MemoryKeyStore(), relayStore: MemoryKeyStore())
+        let backend = RealtimeBackend(config: config, version: "0.0.0-test", keyStore: MemoryKeyStore(), geminiKeyStore: MemoryKeyStore(), relayStore: MemoryKeyStore())
         backend.onShareOriginChange = { [weak self] origin in self?.server.setRelayOrigin(origin) }
         relay.start()
         bridge = NativeBridge(backend: backend, version: "0.0.0-test")
@@ -155,6 +155,26 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
           segmentNoKey: await call({ action: "request", method: "POST", path: "/api/segment", body: { language: "zh", text: "儘管前期人頭一直往下掉所以" } }),
           segmentEmpty: await call({ action: "request", method: "POST", path: "/api/segment", body: { language: "zh", text: "  " } }),
           smartBreaksDefault: document.getElementById("smartBreaksToggle").checked,
+          geminiNoKey: await call({ action: "request", method: "POST", path: "/api/gemini/translation-token", body: { targetLanguage: "zh" } }),
+          geminiBadKey: await call({ action: "request", method: "POST", path: "/api/gemini/key", body: { apiKey: "nope" } }),
+          geminiHealth: (await call({ action: "request", method: "GET", path: "/api/health" })).data?.gemini,
+          providerDefault: document.getElementById("providerSelect").value,
+          providerSwitch: await (async () => {
+            document.getElementById("keyDialog").close();
+            const select = document.getElementById("providerSelect");
+            select.value = "gemini";
+            select.dispatchEvent(new Event("change"));
+            const result = {
+              delayHidden: document.getElementById("delaySelect").closest("label").hidden,
+              keyTitle: document.getElementById("keyDialogTitle").textContent,
+              keyButton: document.getElementById("keyBtn").textContent,
+            };
+            document.getElementById("keyDialog").close();
+            select.value = "openai";
+            select.dispatchEvent(new Event("change"));
+            result.delayShownAgain = !document.getElementById("delaySelect").closest("label").hidden;
+            return result;
+          })(),
           save: await call({ action: "saveFile", filename: "a.srt", mimeType: "text/plain", content: "1\\n00:00:00,000 --> 00:00:01,000\\n測試" }),
           startButton: document.getElementById("startStopBtn").textContent,
           keyDialogOpen: document.getElementById("keyDialog").open,
@@ -175,6 +195,17 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             check("smart line breaks without key → 401", (result["segmentNoKey"] as? [String: Any])?["status"] as? Int == 401)
             check("smart line breaks with no text → 400", (result["segmentEmpty"] as? [String: Any])?["status"] as? Int == 400)
             check("smart line breaks on by default", result["smartBreaksDefault"] as? Bool == true)
+            check("Gemini token without key → 401", (result["geminiNoKey"] as? [String: Any])?["status"] as? Int == 401)
+            check("malformed Gemini key → 400", (result["geminiBadKey"] as? [String: Any])?["status"] as? Int == 400)
+            check("health reports the Gemini key", (result["geminiHealth"] as? [String: Any])?["hasKey"] as? Bool == false)
+            check("OpenAI is the default provider", result["providerDefault"] as? String == "openai")
+            let providerSwitch = result["providerSwitch"] as? [String: Any] ?? [:]
+            check("choosing Gemini hides OpenAI-only settings and asks for a Gemini key",
+                  providerSwitch["delayHidden"] as? Bool == true
+                      && providerSwitch["keyTitle"] as? String == "輸入 Gemini API key"
+                      && providerSwitch["keyButton"] as? String == "輸入 Gemini 金鑰"
+                      && providerSwitch["delayShownAgain"] as? Bool == true,
+                  "\(providerSwitch)")
             check("saveFile round trip", (result["save"] as? [String: Any])?["saved"] as? Bool == true && savedContent.contains("測試"))
             check("UI rendered in Chinese", result["startButton"] as? String == "開始")
             check("key dialog opens when no key is stored", result["keyDialogOpen"] as? Bool == true)
@@ -329,7 +360,7 @@ final class Harness: NSObject, BridgeHost, WKNavigationDelegate {
             check("sharing script", false, "\(error)")
         }
         let policyAfter = await rawResponse("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n")
-        check("CSP then allows exactly the relay", policyAfter.contains("connect-src 'self' https://api.openai.com wss://api.openai.com \(relayOrigin) ws://127.0.0.1:\(relay.port);"))
+        check("CSP then allows exactly the relay", policyAfter.contains("connect-src 'self' https://api.openai.com wss://api.openai.com wss://generativelanguage.googleapis.com \(relayOrigin) ws://127.0.0.1:\(relay.port);"))
     }
 
     // `npm run relay:deploy` opens the app with keynote-live-translator://share-setup?url=…&key=…; the page

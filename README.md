@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>演講、會議、影片的即時字幕與翻譯，還能讓全場觀眾用自己的手機同步看。</strong><br />
-  以 OpenAI <code>gpt-live-transcribe</code> 與 <code>gpt-realtime-translate</code> 打造的 macOS 原生 App。
+  macOS 原生 App，可選 OpenAI（<code>gpt-realtime-translate</code>、<code>gpt-live-transcribe</code>）或 Google Gemini（<code>Gemini 3.5 Live Translate</code>、<code>Gemini 3.5 Transcribe</code>）。
 </p>
 
 <p align="center">
@@ -45,9 +45,10 @@
 | 📱 **全場觀眾用手機看** | 掃 QR Code 就能看即時翻譯，不用裝 App。實測 1,000 位同時觀看，95% 的字幕在 0.35 秒內送達。 |
 | 💸 **觀眾再多也不多花錢** | 翻譯只在講者的 Mac 上跑一次，分享出去的只是文字；分享伺服器用 Cloudflare 免費方案就夠。 |
 | 🎧 **不用喇叭也能翻譯影片** | 直接擷取 Mac 正在播放的聲音（YouTube、線上會議），戴耳機也行，翻譯浮在全螢幕影片上。 |
-| 🔐 **金鑰留在你的電腦** | OpenAI 金鑰只存在本機（可選擇存進 macOS 鑰匙圈），網頁端永遠拿不到；分享伺服器也是你自己的。 |
-| 🧠 **專用模型分工** | `gpt-live-transcribe` 負責準確的原文逐字稿（支援關鍵字與情境），`gpt-realtime-translate` 負責翻譯，`gpt-4.1-mini` 依語意替字幕斷句。 |
-| 🛟 **長時間不中斷** | 斷線自動重連、55 分鐘前自動換新連線、停止時把最後一句說完，自動備份逐字稿。 |
+| 🔀 **OpenAI 或 Google Gemini** | 在設定裡切換服務商，兩家的金鑰各自保存。Gemini 有免費方案，適合先試用。 |
+| 🔐 **金鑰留在你的電腦** | OpenAI 與 Gemini 金鑰只存在本機（可選擇存進 macOS 鑰匙圈），網頁端永遠拿不到；分享伺服器也是你自己的。 |
+| 🧠 **專用模型分工** | 翻譯、原文逐字稿（支援關鍵字）、依語意斷句各用一個專用模型，見下方「兩家服務商」。 |
+| 🛟 **長時間不中斷** | 斷線自動重連、連線到期前自動換新連線（OpenAI 55 分鐘、Gemini 8 分鐘）、停止時把最後一句說完，自動備份逐字稿。 |
 | 📝 **會後直接有字幕檔** | 匯出 SRT（原文／翻譯／雙語）、Markdown、純文字、JSON，SRT 依字幕規範自動切句。 |
 | 🪶 **輕巧原生** | Swift + WKWebView 的 universal App，約 4 MB，沒有 Electron，沒有背景服務。 |
 
@@ -94,7 +95,7 @@
 ## 快速開始
 
 1. 到 [Releases](https://github.com/polarbear0827/Keynote-Live-Translator/releases/latest) 下載 `KeynoteLiveTranslator-<版本>.pkg` 並安裝（macOS 12.3 以上；擷取電腦聲音需要 macOS 14.2 以上）。
-2. 開啟 App，輸入 OpenAI API key。金鑰會立刻驗證，並檢查兩個模型的使用權限；勾選「記住金鑰」才會存進 macOS 鑰匙圈。
+2. 開啟 App，輸入 OpenAI API key（在 platform.openai.com/api-keys 建立）。想用 Google Gemini，先到「設定 > AI 服務」把服務商改成 Google Gemini，再輸入 Gemini API key（在 Google AI Studio 的 aistudio.google.com/apikey 建立，免費方案就能試）。金鑰會立刻驗證，並檢查每個模型的使用權限；勾選「記住金鑰」才會存進 macOS 鑰匙圈。
 3. 選擇模式與語言，到「設定 > 收音 > 測試麥克風」確認音量。可加上講者姓名、產品名稱等**關鍵字**與一句**情境說明**，提高專有名詞的準確度。
 4. 按「開始」（或空白鍵）。
 
@@ -164,7 +165,7 @@ flowchart LR
 | macOS App | Swift 靜態伺服器（`127.0.0.1`，只提供靜態檔） | 原生 Swift，透過 `WKScriptMessageHandlerWithReply` | 只有靜態檔，檢查 Host |
 | 瀏覽器（`npm start`） | Node 開發伺服器 | Node，需要每次啟動產生的權杖 | 檢查 Host／Origin／權杖 |
 
-兩個後端都依照 [`public/realtime-config.json`](public/realtime-config.json)（模型、語言、限制）實作同一套規則，`tests/contract.test.mjs` 會編譯 Swift 版本，確認兩邊產生完全相同的 OpenAI 請求與錯誤訊息。
+兩個後端都依照 [`public/realtime-config.json`](public/realtime-config.json)（模型、語言、限制）實作同一套規則，`tests/contract.test.mjs` 會編譯 Swift 版本，確認兩邊產生完全相同的 OpenAI 與 Gemini 請求和錯誤訊息。
 
 ### 語音管線
 
@@ -183,14 +184,35 @@ flowchart LR
   Store --> Feed["分享"]
 ```
 
+### 兩家服務商
+
+| | OpenAI | Google Gemini |
+|---|---|---|
+| 翻譯 | `gpt-realtime-translate` | `gemini-3.5-live-translate-preview`（預覽版） |
+| 原文逐字稿 | `gpt-live-transcribe` | `gemini-3.5-transcribe-live` |
+| 智慧斷句 | `gpt-4.1-mini` | `gemini-3.5-flash-lite` |
+| 連線 | 翻譯走 WebRTC（電腦聲音走 App 的 WebSocket），原文走 WebSocket | 都走 WebSocket（Live API） |
+| 一條連線最長 | 60 分鐘（55 分鐘換線） | 約 10 分鐘（8 分鐘或收到 `goAway` 就換線） |
+| 雙語字幕一小時（官方價格） | 約 US$3.1 | 約 US$2.8，另有免費方案 |
+
+切換服務商不影響其他功能：字幕、懸浮字幕、分享、逐字稿與匯出都吃同一套事件。
+
+**OpenAI**
 - **原文**：`gpt-live-transcribe` 走 Realtime transcription session（WebSocket），沒有伺服器端 VAD，所以由前端的 VAD 在每句結束時 `commit`；太長的句子會在 15 秒後找停頓切開。支援 `languages`、`delay`（最即時～最準確五段）、`keywords`、`prompt`。
 - **翻譯**：`gpt-realtime-translate` 自動偵測說話語言、輸出指定語言的文字（也能播放翻譯語音）。麥克風走 WebRTC（短效 client secret）；系統音訊已經在 App 裡，改走 App 自己的 WebSocket，避開 UDP 被擋的網路。
 - **韌性**：每條連線各自指數退避重連；Realtime session 有 60 分鐘上限，所以 55 分鐘時先接好新連線、再無縫切換音訊；按停止時用 `session.close` 等最後一句翻完。
 
+**Google Gemini（Live API）**
+- **權杖**：後端用金鑰向 `POST /v1beta/auth_tokens` 換一次性的 ephemeral token，並把整個 session 設定（模型、語言、轉錄選項）鎖在權杖裡；網頁用它連 `BidiGenerateContentConstrained`，拿不到金鑰，也改不了設定。
+- **音訊**：App 收音是 24 kHz，送給 Gemini 前先低通濾波、降到 16 kHz PCM16，每 100 ms 一包。
+- **翻譯**：一條連線同時回傳翻譯語音、原文與譯文的文字稿（`inputTranscription`／`outputTranscription`）；講者說的已經是目標語言時會照原文輸出（`echoTargetLanguage`），字幕不會漏掉。
+- **原文**：`SMART` 模式會自動加標點、去掉贅字；「關鍵字」變成自訂詞彙（`customVocabulary`）。暫定稿（`interimInputTranscription`）即時顯示，App 的 VAD 聽到講者停下就送 `audioStreamEnd`，讓 Gemini 立刻定稿。
+- **韌性**：連線約 10 分鐘就會被關閉，所以 8 分鐘（或收到 `goAway`）時先接好新連線再切換音訊，舊連線把最後一句說完；斷線同樣自動重連。
+
 ### 字幕與逐字稿
 
 - 原文與翻譯各自是一條有時間的軌道，匯出 SRT 時依時間重疊對齊，翻譯延遲不會讓原文錯位。
-- **依語意斷句**：翻譯模型的中文常常沒有標點、一口氣連著出來，所以斷句交給文字模型（`gpt-4.1-mini`）。翻譯一邊串流，App 一邊把「還沒斷開的那一段」連同上一行送給它，它依語句、語氣和語意標出每段話在哪裡結束（句子說完、轉折連接詞前、語氣詞後、話題轉換），但**只標斷點、不改任何字**：App 會把它回的每一行逐字對回原文，對不上就不採用。最後一段可能還沒說完，所以保持開放、等更多文字再判斷。同一條串流一次只有一個請求，回來後再送新累積的文字。
+- **依語意斷句**：翻譯模型的中文常常沒有標點、一口氣連著出來，所以斷句交給文字模型（`gpt-4.1-mini`，選 Gemini 時用 `gemini-3.5-flash-lite`）。翻譯一邊串流，App 一邊把「還沒斷開的那一段」連同上一行送給它，它依語句、語氣和語意標出每段話在哪裡結束（句子說完、轉折連接詞前、語氣詞後、話題轉換），但**只標斷點、不改任何字**：App 會把它回的每一行逐字對回原文，對不上就不採用。最後一段可能還沒說完，所以保持開放、等更多文字再判斷。同一條串流一次只有一個請求，回來後再送新累積的文字。
 - **標點與停頓**：**逗號就換行**（分號、冒號也是；列舉用的「、」和 `3,000`、`3:00` 這類數字不算），但**一行不到 10 個字時不切**，像「對，」會接著下一段一起顯示；AI 的斷點和停頓換行也遵守這條。確認的句尾（`3.` 可能還是 `3.14`）和翻譯停頓 0.9 秒以上，也都直接換行，不必等模型。
 - **備援**：沒有網路、金鑰不能用這個模型，或在設定關閉「智慧斷句」時，改用規則斷句：一段話太長時，切在最自然的地方（連接詞前、語氣詞後），用 `Intl.Segmenter` 找詞的邊界，不會把詞切斷。模型連續失敗會自動改用備援，並提示一次。
 - 主視窗、字幕視窗、懸浮字幕、觀眾手機和匯出的 SRT 都用同一套斷行；中文裡的半形逗號轉成全形，行尾的逗號由換行取代。
@@ -200,7 +222,7 @@ flowchart LR
 ### macOS 原生層
 
 - Swift AppKit + WKWebView，`swiftc` 直接編出 arm64 + x86_64 universal binary，`pkgbuild` 打包，約 4 MB。
-- 頁面由 `Network.framework` 寫的本機靜態伺服器提供（`127.0.0.1`，拒絕其他 Host 以防 DNS rebinding），OpenAI 金鑰只存在原生端。
+- 頁面由 `Network.framework` 寫的本機靜態伺服器提供（`127.0.0.1`，拒絕其他 Host 以防 DNS rebinding），OpenAI 與 Gemini 金鑰只存在原生端。
 - 系統音訊：`CATapDescription` ＋ `AudioHardwareCreateProcessTap` 建立 process tap 與 aggregate device，切換輸出裝置時自動重建。
 - 懸浮字幕：不搶焦點的 `NSPanel`（`.statusBar` 層級、所有桌面空間、全螢幕輔助），字級由視窗高度反推，整句排版、最舊的句子先捨棄。
 
@@ -250,13 +272,13 @@ sequenceDiagram
 npm run relay:load-test -- --url https://klt-relay.<你的名稱>.workers.dev --viewers 1000 --seconds 30
 ```
 
-**費用**：OpenAI 只依講者端的音訊計費，與觀看人數無關（智慧斷句另外用少量文字模型 token，一場一小時的演講約 0.5～1 美元，可在設定關閉）。Cloudflare 免費方案每天 100,000 次請求，一場一小時、1,000 人的演講只用掉一小部分。
+**費用**：OpenAI 與 Gemini 都只依講者端的音訊計費，與觀看人數無關（智慧斷句另外用少量文字模型 token：OpenAI 一場一小時約 0.5～1 美元，Gemini 更便宜；可在設定關閉）。Cloudflare 免費方案每天 100,000 次請求，一場一小時、1,000 人的演講只用掉一小部分。
 
 ## 安全與隱私
 
-- **OpenAI 金鑰**：執行時由使用者輸入，不寫進 App；預設只在記憶體，勾選後才存進 macOS 鑰匙圈；只用來換取短效的 Realtime client secret，網頁端拿不到長期金鑰。
+- **OpenAI 與 Gemini 金鑰**：執行時由使用者輸入，不寫進 App；預設只在記憶體，勾選後才存進 macOS 鑰匙圈（兩把各自一筆）；只用來換取短效的 Realtime client secret 或一次性的 Gemini 權杖，網頁端拿不到長期金鑰。
 - **本機服務**：開發伺服器檢查 `Host`（防 DNS rebinding）、`Origin`、`Content-Type` 與每次啟動的權杖；macOS App 完全不對外提供 API，只接受自己頁面的訊息。
-- **內容安全政策（CSP）**：頁面只能連到 OpenAI 與你設定的那台分享伺服器。
+- **內容安全政策（CSP）**：頁面只能連到 OpenAI、Gemini Live API 與你設定的那台分享伺服器。
 - **分享**：
   - 只有持有發佈金鑰的 App 能開房間，每個房間另有主持權杖（伺服器只存雜湊）。
   - 觀眾連線只能接收，送任何東西都會被忽略。
@@ -270,9 +292,9 @@ npm run relay:load-test -- --url https://klt-relay.<你的名稱>.workers.dev --
 
 | 測試 | 內容 |
 |---|---|
-| **Node 單元與整合測試（115 項）** | 文字處理、繁簡轉換、逐字稿與 SRT、設定、開發伺服器安全、Session 控制器（重連、換線、取消）、語意斷句（斷點對齊、請求排程、備援規則）、分享發佈器、房間邏輯、QR 編碼器 |
+| **Node 單元與整合測試（129 項）** | 文字處理、繁簡轉換、逐字稿與 SRT、設定、開發伺服器安全、Session 控制器（重連、換線、取消）、Gemini 連線（權杖、降頻、事件轉換、換線）、語意斷句（斷點對齊、請求排程、備援規則）、分享發佈器、房間邏輯、QR 編碼器 |
 | **Swift ↔ Node 合約測試** | 編譯原生後端，確認兩邊對同一組輸入產生完全相同的結果 |
-| **macOS 真實環境測試（54 項）** | 在離屏 WKWebView 跑真正的介面與原生橋接：系統音訊、懸浮字幕排版、分享設定與 CSP、自動連接連結、Apple Vision 解碼 QR Code |
+| **macOS 真實環境測試（59 項）** | 在離屏 WKWebView 跑真正的介面與原生橋接：系統音訊、懸浮字幕排版、服務商切換、分享設定與 CSP、自動連接連結、Apple Vision 解碼 QR Code |
 | **分享伺服器端對端測試（8 項）＋壓力測試** | 在 `wrangler dev`（workerd）跑真正的 Worker：權限、廣播、觀眾不能發送、主持端重連與重新同步；CI 另跑 300 位模擬觀眾 |
 
 ## 開發
@@ -299,6 +321,8 @@ zsh scripts/make-icons.sh # 從 assets/logo.png 重新產生 App 圖示與網頁
 ```text
 public/             介面（ES modules，無框架、無建置步驟）
   js/session.js       連線、重連、換線、VAD commit
+  js/gemini.js        Gemini Live API 連線（權杖、16 kHz 音訊、事件轉換）
+  js/segmenter.js     依語意斷句（請求排程、斷點對齊）
   js/transcript.js    逐字稿資料（時間軸、切句）
   js/share*.js        分享發佈器與分享面板
   js/qr.js            QR Code 編碼器

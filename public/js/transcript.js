@@ -93,8 +93,9 @@ export class TranscriptStore {
     this.emit({ type: "remove", entry });
   }
 
-  // Transcription items: deltas append, the completed transcript replaces.
-  upsertItem(itemKey, { track = "source", language, startMs, endMs, delta, transcript }) {
+  // Transcription items: deltas append, a partial (interim hypothesis) or the completed transcript
+  // replaces.
+  upsertItem(itemKey, { track = "source", language, startMs, endMs, delta, partial, transcript }) {
     let entry = this.byItem.get(itemKey);
     if (!entry) {
       const start = startMs ?? endMs ?? 0;
@@ -102,6 +103,7 @@ export class TranscriptStore {
       this.byItem.set(itemKey, entry);
     }
     if (typeof delta === "string") entry.text += delta;
+    if (typeof partial === "string" && !entry.final) entry.text = partial;
     if (typeof transcript === "string") {
       entry.text = transcript;
       entry.final = true;

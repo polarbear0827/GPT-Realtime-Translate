@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.0 - 2026-10-14
+
+- **Google Gemini as a second provider.** Settings → 「AI 服務」 switches between OpenAI and Google
+  Gemini; each provider keeps its own key (memory, or the Keychain if remembered). With Gemini:
+  - translation uses `gemini-3.5-live-translate-preview` (speech already in the target language is
+    passed through, so it still gets captions), with both transcripts from the same connection;
+  - the source transcript uses `gemini-3.5-transcribe-live` in SMART mode (punctuation, no filler
+    words), with the keywords as custom vocabulary; interim hypotheses show live, and the app's VAD
+    sends `audioStreamEnd` when the speaker stops so utterances are finalized right away;
+  - smart line breaks use `gemini-3.5-flash-lite`;
+  - translated speech can be played, as with OpenAI.
+- The backend trades the Gemini key for single-use ephemeral tokens locked to the exact session
+  setup (`POST /v1beta/auth_tokens`); the page connects to `BidiGenerateContentConstrained` and never
+  sees the key. Both backends (Node and Swift) build the same setups and token requests, checked by
+  the contract test.
+- Audio is downsampled from 24 kHz to 16 kHz (low-pass, then 2 samples of every 3) and sent in 100 ms
+  messages. Gemini connections are renewed every 8 minutes, or as soon as the service sends `goAway`,
+  with the same seamless switch as OpenAI's 55-minute rotation.
+- Saving a Gemini key checks it with Google and warns about models it can't use.
+- Settings only one provider uses (transcription delay, distance, context prompt) are hidden for the
+  other.
+
 ## v1.2.2 - 2026-10-13
 
 - **No line shorter than 10 characters.** A comma no longer leaves a short piece such as 「對，」 on a

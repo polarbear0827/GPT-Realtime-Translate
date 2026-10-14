@@ -17,7 +17,19 @@ import {
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "../server/realtime.mjs";
+import {
+  buildGeminiSegmentRequest,
+  buildGeminiTokenRequest,
+  geminiTranscriptionSetup,
+  geminiTranslationSetup,
+  parseGeminiSegmentResponse,
+  parseGeminiToken,
+  validateGeminiKeyFormat,
+} from "../server/gemini.mjs";
 import { contentSecurityPolicy, normalizeRelayUrl, normalizeRoomTitle, validatePublishKey } from "../server/share.mjs";
+
+// A fixed clock for token expiry times (whole seconds, so both languages format them the same way).
+const NOW_MS = Date.UTC(2026, 9, 14, 3, 4, 5);
 
 const root = new URL("..", import.meta.url).pathname;
 const configPath = join(root, "public/realtime-config.json");
@@ -72,6 +84,22 @@ const fixtures = [
   { kind: "segmentResponse", value: { choices: [{ message: { content: " 所以他的大樹又快上線了 \r\n\n再看男槍\n" } }] } },
   { kind: "segmentResponse", value: { choices: [] } },
   { kind: "segmentResponse", value: { error: { message: "nope" } } },
+  { kind: "segment", body: { provider: "gemini", language: "zh", text: "所以他的大樹又快上線了", context: "有經濟差" } },
+  { kind: "segment", body: { provider: "claude", language: "zh", text: "你好" } },
+  { kind: "geminiKey", value: "  AIzaSyA-0123456789abcdefghijklmnopqrstu  " },
+  { kind: "geminiKey", value: "sk-0123456789abcdefghijklmnopqrstuvwxyz" },
+  { kind: "geminiKey", value: "AIzaShort" },
+  { kind: "geminiTranslation", body: { targetLanguage: "zh" } },
+  { kind: "geminiTranslation", body: { targetLanguage: "pt" } },
+  { kind: "geminiTranslation", body: { targetLanguage: "xx" } },
+  { kind: "geminiTranscription", body: {} },
+  { kind: "geminiTranscription", body: { sourceLanguage: "zh", keywords: "FlyQuest\nKarsa、Vi" } },
+  { kind: "geminiTranscription", body: { sourceLanguage: "xx" } },
+  { kind: "geminiToken", body: { targetLanguage: "ja" } },
+  { kind: "geminiTokenResponse", value: { name: "auth_tokens/abc123" } },
+  { kind: "geminiTokenResponse", value: { error: { message: "nope" } } },
+  { kind: "geminiSegmentResponse", value: { candidates: [{ content: { parts: [{ text: "thinking", thought: true }, { text: "所以他的大樹\r\n又快上線了\n" }, { text: "再看" }] } }] } },
+  { kind: "geminiSegmentResponse", value: { candidates: [] } },
   { kind: "csp", value: null },
   { kind: "csp", value: "https://klt-relay.example.workers.dev" },
   { kind: "csp", value: "http://127.0.0.1:8788" },
@@ -85,7 +113,16 @@ function nodeResult(fixture) {
     if (fixture.kind === "publishKey") return { ok: validatePublishKey(fixture.value) };
     if (fixture.kind === "roomTitle") return { ok: normalizeRoomTitle(fixture.value) };
     if (fixture.kind === "csp") return { ok: contentSecurityPolicy(fixture.value) };
-    if (fixture.kind === "segment") return { ok: buildSegmentRequest(validateSegmentRequest(fixture.body, config), config) };
+    if (fixture.kind === "segment") {
+      const params = validateSegmentRequest(fixture.body, config);
+      return { ok: params.provider === "gemini" ? buildGeminiSegmentRequest(params, config) : buildSegmentRequest(params, config) };
+    }
+    if (fixture.kind === "geminiKey") return { ok: validateGeminiKeyFormat(fixture.value) };
+    if (fixture.kind === "geminiTranslation") return { ok: geminiTranslationSetup(fixture.body, config) };
+    if (fixture.kind === "geminiTranscription") return { ok: geminiTranscriptionSetup(fixture.body, config) };
+    if (fixture.kind === "geminiToken") return { ok: buildGeminiTokenRequest(geminiTranslationSetup(fixture.body, config), config, NOW_MS) };
+    if (fixture.kind === "geminiTokenResponse") return { ok: parseGeminiToken(fixture.value) };
+    if (fixture.kind === "geminiSegmentResponse") return { ok: parseGeminiSegmentResponse(fixture.value) };
     if (fixture.kind === "segmentResponse") return { ok: parseSegmentResponse(fixture.value) };
     return { ok: validateApiKeyFormat(fixture.value) };
   } catch (error) {
@@ -119,7 +156,7 @@ test("Swift (macOS app) and Node (dev server) agree on validation and payloads",
   ]);
   const fixturesPath = join(dir, "fixtures.json");
   writeFileSync(fixturesPath, JSON.stringify(fixtures));
-  const swift = JSON.parse(execFileSync(binary, [configPath, fixturesPath], { encoding: "utf8" }));
+  const swift = JSON.parse(execFileSync(binary, [configPath, fixturesPath, String(NOW_MS)], { encoding: "utf8" }));
   fixtures.forEach((fixture, index) => {
     assert.deepEqual(swift[index], nodeResult(fixture), `fixture ${index}: ${JSON.stringify(fixture).slice(0, 80)}`);
   });

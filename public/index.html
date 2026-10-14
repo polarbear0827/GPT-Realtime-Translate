@@ -241,7 +241,21 @@
         <button type="button" class="ghost" data-close-drawer>關閉</button>
       </header>
       <div class="drawer-body">
-        <p class="settings-note" id="liveSettingsNote" hidden>直播中無法變更收音與辨識設定，停止後再調整。</p>
+        <p class="settings-note" id="liveSettingsNote" hidden>直播中無法變更服務商、收音與辨識設定，停止後再調整。</p>
+
+        <section class="settings-section">
+          <h3>AI 服務</h3>
+          <label class="field">
+            <span>服務商</span>
+            <select id="providerSelect">
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </label>
+          <p class="field-hint" data-provider="openai">翻譯 gpt-realtime-translate・原文 gpt-live-transcribe・智慧斷句 gpt-4.1-mini。</p>
+          <p class="field-hint" data-provider="gemini" hidden>翻譯 gemini-3.5-live-translate-preview（預覽版）・原文 gemini-3.5-transcribe-live・智慧斷句 gemini-3.5-flash-lite。Google 的免費方案可以先試用；正式活動建議用付費金鑰（免費用量可能被用來改進 Google 的產品）。</p>
+          <p class="field-hint">兩家的金鑰各自保存，切換服務商不必重新輸入。</p>
+        </section>
 
         <section class="settings-section">
           <h3>收音</h3>
@@ -268,7 +282,7 @@
               <option value="raw">原音（混音器或錄音介面輸入）</option>
             </select>
           </label>
-          <label class="field">
+          <label class="field" data-provider="openai">
             <span>收音距離</span>
             <select id="noiseReductionSelect">
               <option value="near_field">近距離（領夾、頭戴、手持麥克風）</option>
@@ -283,10 +297,10 @@
             <span>雙語模式的原文來源</span>
             <select id="bilingualEngineSelect">
               <option value="dual">轉錄模型（較準、可用關鍵字）</option>
-              <option value="translate">翻譯模型附帶的原文（費用約減半）</option>
+              <option value="translate">翻譯模型附帶的原文（較省錢）</option>
             </select>
           </label>
-          <label class="field">
+          <label class="field" data-provider="openai">
             <span>轉錄延遲</span>
             <select id="delaySelect">
               <option value="minimal">最即時</option>
@@ -300,11 +314,12 @@
             <span>關鍵字（講者、產品、術語，每行一個）</span>
             <textarea id="keywordsInput" rows="4" spellcheck="false" placeholder="例如：&#10;OpenAI&#10;Keynote Live Translator"></textarea>
           </label>
-          <label class="field">
+          <label class="field" data-provider="openai">
             <span>情境說明（選填）</span>
             <textarea id="promptInput" rows="3" maxlength="500" placeholder="例如：AI 開發者大會的產品發表演講"></textarea>
           </label>
-          <p class="field-hint">關鍵字與情境說明只用於轉錄模型（gpt-live-transcribe）。</p>
+          <p class="field-hint" data-provider="openai">關鍵字與情境說明只用於轉錄模型（gpt-live-transcribe）。</p>
+          <p class="field-hint" data-provider="gemini" hidden>關鍵字只用於轉錄模型（gemini-3.5-transcribe-live 的自訂詞彙），最多 100 個效果最好。</p>
         </section>
 
         <section class="settings-section">
@@ -434,6 +449,7 @@
         <p class="dialog-copy" id="keyDialogCopy">
           金鑰只交給這台裝置上的本機服務，用來換取短效的連線權杖；不會寫入檔案、瀏覽器儲存或日誌。
         </p>
+        <p class="field-hint" id="keyDialogSource">在 platform.openai.com/api-keys 建立金鑰。</p>
         <label class="field">
           <span>API key</span>
           <span class="input-with-button">

@@ -15,6 +15,16 @@ import {
   validateTranscriptionRequest,
   validateTranslationRequest,
 } from "./realtime.mjs";
+import {
+  GEMINI,
+  buildGeminiSegmentRequest,
+  buildGeminiTokenRequest,
+  geminiTranscriptionSetup,
+  geminiTranslationSetup,
+  parseGeminiSegmentResponse,
+  parseGeminiToken,
+  validateGeminiKeyFormat,
+} from "./gemini.mjs";
 import { contentSecurityPolicy, normalizeRelayUrl, normalizeRoomTitle, validatePublishKey } from "./share.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -49,13 +59,14 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
   // cross-site / DNS-rebinding requests cannot use the API key even though they can reach the port.
   const token = randomBytes(24).toString("base64url");
   let apiKey = null;
+  let geminiKey = null;
   // Audience sharing relay: { origin, key } or null. Kept in memory like the API key.
   let share = relay;
   let actualPort = port;
 
   const server = createServer(async (req, res) => {
     for (const [key, value] of Object.entries(securityHeaders)) res.setHeader(key, value);
-    // The page may connect to the configured relay and nothing else besides OpenAI.
+    // The page may connect to the configured relay and nothing else besides OpenAI and Gemini.
     res.setHeader("Content-Security-Policy", contentSecurityPolicy(share?.origin));
 
     if (!isAllowedHost(req.headers.host, actualPort) || !isAllowedOrigin(req.headers.origin, actualPort)) {
@@ -97,6 +108,7 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
         version: appVersion,
         hasApiKey: Boolean(apiKey),
         rememberedKey: false,
+        gemini: { hasKey: Boolean(geminiKey), rememberedKey: false },
         share: { configured: Boolean(share), origin: share?.origin ?? null },
       });
       return;
@@ -160,15 +172,84 @@ export function startServer({ port = Number(process.env.PORT || 8787), host = "1
 
     if (pathname === "/api/segment" && req.method === "POST") {
       const params = validateSegmentRequest(await readJson(req), config);
-      if (!apiKey) {
+      if (!(params.provider === "gemini" ? geminiKey : apiKey)) {
         sendJson(res, 401, { error: "尚未設定 API key。" });
         return;
       }
-      await segment(res, params);
+      if (params.provider === "gemini") await segmentWithGemini(res, params);
+      else await segment(res, params);
+      return;
+    }
+
+    if (pathname === "/api/gemini/key" && req.method === "POST") {
+      const body = await readJson(req);
+      const key = validateGeminiKeyFormat(body.apiKey);
+      const verification = await verifyGeminiKey(key, fetchImpl);
+      if (verification.rejected) {
+        sendJson(res, 400, { error: verification.rejected });
+        return;
+      }
+      geminiKey = key;
+      sendJson(res, 200, { ok: true, remembered: false, warnings: verification.warnings });
+      return;
+    }
+
+    if (pathname === "/api/gemini/key" && req.method === "DELETE") {
+      geminiKey = null;
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (pathname === "/api/gemini/translation-token" && req.method === "POST") {
+      await geminiToken(res, geminiTranslationSetup(await readJson(req), config));
+      return;
+    }
+
+    if (pathname === "/api/gemini/transcription-token" && req.method === "POST") {
+      await geminiToken(res, geminiTranscriptionSetup(await readJson(req), config));
       return;
     }
 
     sendJson(res, 404, { error: "Not found." });
+  }
+
+  // Calls the Gemini API with the key. Returns [status, data]; network failures become ValidationErrors.
+  async function geminiCall(path, body, timeoutMs) {
+    let upstream;
+    try {
+      upstream = await fetchImpl(`${GEMINI}/${path}`, {
+        method: "POST",
+        headers: { "x-goog-api-key": geminiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      const timedOut = error?.name === "TimeoutError";
+      throw new ValidationError(timedOut ? "Gemini 回應逾時。" : "無法連線到 Gemini，請檢查網路。", timedOut ? 504 : 502);
+    }
+    let data = {};
+    try {
+      data = await upstream.json();
+    } catch {
+      // Not JSON.
+    }
+    if (!upstream.ok) throw new ValidationError(data?.error?.message || `Gemini 回應錯誤（${upstream.status}）。`, upstream.status);
+    return data;
+  }
+
+  // A single-use ephemeral token locked to `setup`; the page sends the same setup when it connects.
+  async function geminiToken(res, setup) {
+    if (!geminiKey) {
+      sendJson(res, 401, { error: "尚未設定 Gemini API key。" });
+      return;
+    }
+    const data = await geminiCall("auth_tokens", buildGeminiTokenRequest(setup, config, Date.now()), UPSTREAM_TIMEOUT_MS);
+    sendJson(res, 200, { token: parseGeminiToken(data), setup });
+  }
+
+  async function segmentWithGemini(res, params) {
+    const data = await geminiCall(`models/${config.gemini.models.segmentation}:generateContent`, buildGeminiSegmentRequest(params, config), SEGMENT_TIMEOUT_MS);
+    sendJson(res, 200, { lines: parseGeminiSegmentResponse(data) });
   }
 
   async function segment(res, params) {
@@ -323,6 +404,35 @@ export async function verifyApiKey(key, fetchImpl = fetch) {
       warnings.push(model === config.models.segmentation ? `這把金鑰目前無法使用 ${model}，智慧斷句會改用一般斷句。` : `這把金鑰目前無法使用 ${model}。`);
     }
     else if (status >= 400) warnings.push(`驗證 ${model} 時 OpenAI 回應 ${status}。`);
+  }
+  return { rejected: null, warnings: [...new Set(warnings)] };
+}
+
+// Same idea for a Gemini key: rejected keys fail, models the key can't use only warn.
+export async function verifyGeminiKey(key, fetchImpl = fetch) {
+  const models = Object.values(config.gemini.models);
+  const warnings = [];
+  const results = await Promise.all(
+    models.map(async (model) => {
+      try {
+        const response = await fetchImpl(`${GEMINI}/models/${model}`, {
+          headers: { "x-goog-api-key": key },
+          signal: AbortSignal.timeout(10_000),
+        });
+        return { model, status: response.status };
+      } catch {
+        return { model, status: 0 };
+      }
+    }),
+  );
+  if (results.some((result) => result.status === 400 || result.status === 401)) {
+    return { rejected: "Google 拒絕這把金鑰（無效或已撤銷）。", warnings };
+  }
+  for (const { model, status } of results) {
+    if (status === 0) warnings.push("暫時無法連線到 Google 驗證金鑰，已先儲存。");
+    else if (status === 403 || status === 404) {
+      warnings.push(model === config.gemini.models.segmentation ? `這把金鑰目前無法使用 ${model}，智慧斷句會改用一般斷句。` : `這把金鑰目前無法使用 ${model}。`);
+    } else if (status >= 400) warnings.push(`驗證 ${model} 時 Google 回應 ${status}。`);
   }
   return { rejected: null, warnings: [...new Set(warnings)] };
 }

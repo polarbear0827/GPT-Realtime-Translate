@@ -4,6 +4,7 @@
 const PREFIX = "keynote:";
 
 export const DEFAULT_SETTINGS = {
+  provider: "openai",
   captionMode: "bilingual",
   sourceLanguage: "en",
   targetLanguage: "zh",
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 const CHOICES = {
+  provider: ["openai", "gemini"],
   captionMode: ["bilingual", "translation", "source"],
   bilingualEngine: ["dual", "translate"],
   audioSource: ["mic", "system"],

@@ -100,7 +100,10 @@ const els = {
   clearKeyBtn: $("clearKeyBtn"),
   versionLabel: $("versionLabel"),
   toasts: $("toasts"),
+  providerSelect: $("providerSelect"),
   keyDialog: $("keyDialog"),
+  keyDialogTitle: $("keyDialogTitle"),
+  keyDialogSource: $("keyDialogSource"),
   keyForm: $("keyForm"),
   apiKeyInput: $("apiKeyInput"),
   toggleKeyVisibility: $("toggleKeyVisibility"),
@@ -124,7 +127,13 @@ const sourceView = new CaptionView(els.sourceCaption, "等待語音輸入…");
 const translationView = new CaptionView(els.translatedCaption, "等待翻譯…");
 const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(DISPLAY_CHANNEL) : null;
 
-let hasApiKey = false;
+// Which providers have a key in the backend (it never comes back to the page).
+const keys = { openai: false, gemini: false };
+const PROVIDERS = {
+  openai: { name: "OpenAI", placeholder: "sk-...", prefix: "sk-", source: "在 platform.openai.com/api-keys 建立金鑰。" },
+  gemini: { name: "Gemini", placeholder: "AIza...", prefix: "AIza", source: "在 Google AI Studio（aistudio.google.com/apikey）建立金鑰，免費方案就能試用。" },
+};
+const hasKey = () => keys[settings.provider];
 let platformInfo = { supports: {} };
 let appVersion = "";
 let paused = false;
@@ -219,7 +228,8 @@ async function initMainView() {
   let health = null;
   try {
     health = await api.getHealth();
-    hasApiKey = Boolean(health.hasApiKey);
+    keys.openai = Boolean(health.hasApiKey);
+    keys.gemini = Boolean(health.gemini?.hasKey);
     appVersion = health.version || platformInfo.version || "";
     els.versionLabel.textContent = appVersion ? `版本 ${appVersion}` : "";
   } catch (error) {
@@ -228,7 +238,7 @@ async function initMainView() {
   initShare(health?.share);
   renderStatus();
   scheduleCaptions();
-  if (!hasApiKey) openKeyDialog();
+  if (!hasKey()) openKeyDialog();
   await refreshMicrophones();
   navigator.mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
   loadChineseIfNeeded();
@@ -259,6 +269,8 @@ function applySettingsToControls() {
   els.audioSourceSelect.value = settings.audioSource;
   els.muteSystemAudioToggle.checked = settings.muteSystemAudio;
   els.themeSelect.value = settings.theme;
+  els.providerSelect.value = settings.provider;
+  applyProvider();
   els.sourceLanguageSelect.value = settings.sourceLanguage;
   els.targetLanguageSelect.value = settings.targetLanguage;
   els.micProcessingSelect.value = settings.micProcessing;
@@ -387,6 +399,12 @@ function bindEvents() {
     if (settings.autoBackup) scheduleBackup();
     else storage.remove(BACKUP_KEY);
   });
+  els.providerSelect.addEventListener("change", () => {
+    updateSetting("provider", els.providerSelect.value);
+    applyProvider();
+    renderStatus();
+    if (!hasKey()) openKeyDialog();
+  });
   els.smartBreaksToggle.addEventListener("change", () => {
     updateSetting("smartBreaks", els.smartBreaksToggle.checked);
     controller.setSmartBreaks(settings.smartBreaks);
@@ -435,11 +453,12 @@ async function toggleSession() {
 }
 
 async function startSession() {
-  if (!hasApiKey) {
+  if (!hasKey()) {
     openKeyDialog();
     return;
   }
   const options = {
+    provider: settings.provider,
     mode: settings.captionMode,
     sourceLanguage: settings.sourceLanguage,
     targetLanguage: settings.targetLanguage,
@@ -521,10 +540,11 @@ function renderStatus() {
     els.keywordsInput,
     els.promptInput,
     els.clearKeyBtn,
+    els.providerSelect,
   ]) {
     control.disabled = busy;
   }
-  els.clearKeyBtn.disabled = busy || !hasApiKey;
+  els.clearKeyBtn.disabled = busy || !hasKey();
   const systemAudio = settings.audioSource === "system";
   els.audioSourceSelect.disabled = busy;
   els.muteSystemAudioToggle.disabled = busy || !systemAudio;
@@ -536,7 +556,7 @@ function renderStatus() {
 
   els.recordBtn.setAttribute("aria-pressed", String(settings.recording));
   els.recordBtn.textContent = settings.recording ? "記錄逐字稿：開" : "記錄逐字稿：關";
-  els.keyBtn.textContent = hasApiKey ? "更換金鑰" : "輸入金鑰";
+  els.keyBtn.textContent = `${hasKey() ? "更換" : "輸入"} ${PROVIDERS[settings.provider].name} 金鑰`;
   els.keyBtn.disabled = busy;
   els.pauseBtn.setAttribute("aria-pressed", String(paused));
   els.pauseBtn.textContent = paused ? "恢復顯示" : "暫停顯示";
@@ -951,9 +971,18 @@ async function testMicrophone() {
 
 // ---- API key ----------------------------------------------------------------------------------
 
+// Settings that only one provider uses are shown for that provider only.
+function applyProvider() {
+  for (const element of document.querySelectorAll("[data-provider]")) element.hidden = element.dataset.provider !== settings.provider;
+}
+
 function openKeyDialog() {
   if (controller.status !== "idle" || els.keyDialog.open) return;
   showKeyError("");
+  const provider = PROVIDERS[settings.provider];
+  els.keyDialogTitle.textContent = `輸入 ${provider.name} API key`;
+  els.keyDialogSource.textContent = provider.source;
+  els.apiKeyInput.placeholder = provider.placeholder;
   const supportsRemember = Boolean(platformInfo.supports?.rememberKey);
   els.rememberKeyField.hidden = !supportsRemember;
   if (supportsRemember && platformInfo.rememberKeyLabel) els.rememberKeyLabel.textContent = platformInfo.rememberKeyLabel;
@@ -965,15 +994,18 @@ function openKeyDialog() {
 async function saveApiKey(event) {
   event.preventDefault();
   const key = els.apiKeyInput.value.trim();
-  if (!key.startsWith("sk-")) {
-    showKeyError("請輸入有效的 OpenAI API key（以 sk- 開頭）。");
+  const providerName = settings.provider;
+  const provider = PROVIDERS[providerName];
+  if (!key.startsWith(provider.prefix)) {
+    showKeyError(`請輸入有效的 ${provider.name} API key（以 ${provider.prefix} 開頭）。`);
     return;
   }
   els.saveKeyBtn.disabled = true;
   els.saveKeyBtn.textContent = "驗證中…";
   try {
-    const result = await api.saveKey(key, els.rememberKeyToggle.checked);
-    hasApiKey = true;
+    const save = providerName === "gemini" ? api.saveGeminiKey : api.saveKey;
+    const result = await save(key, els.rememberKeyToggle.checked);
+    keys[providerName] = true;
     els.keyDialog.close();
     toaster.show("success", result.remembered ? "金鑰已驗證並儲存在系統安全儲存區。" : "金鑰已驗證，只保存在記憶體中。");
     for (const warning of result.warnings || []) toaster.show("warning", warning);
@@ -993,10 +1025,12 @@ function showKeyError(message) {
 
 async function clearApiKey() {
   if (controller.status !== "idle") return;
-  if (!(await confirmDialog(els.confirmDialog, "確定要清除金鑰嗎？已記住的金鑰也會一併刪除。", { okText: "清除金鑰" }))) return;
+  const providerName = settings.provider;
+  const message = `確定要清除 ${PROVIDERS[providerName].name} 金鑰嗎？已記住的金鑰也會一併刪除。`;
+  if (!(await confirmDialog(els.confirmDialog, message, { okText: "清除金鑰" }))) return;
   try {
-    await api.deleteKey();
-    hasApiKey = false;
+    await (providerName === "gemini" ? api.deleteGeminiKey() : api.deleteKey());
+    keys[providerName] = false;
     renderStatus();
     openKeyDialog();
   } catch (error) {
