@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.1 - 2026-10-14
+
+- Gemini keys in the current format are accepted: Google AI Studio creates "auth keys" starting with
+  `AQ.` since May 2026, and v1.3.0 only accepted the older `AIza` keys. Older keys (which still work
+  when restricted) are accepted too.
+
 ## v1.3.0 - 2026-10-14
 
 - **Google Gemini as a second provider.** Settings → 「AI 服務」 switches between OpenAI and Google

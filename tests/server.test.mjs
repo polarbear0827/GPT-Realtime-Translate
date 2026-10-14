@@ -7,7 +7,8 @@ import { startServer } from "../server/index.mjs";
 const upstreamCalls = [];
 let modelStatus = 200;
 let geminiModelStatus = 200;
-const GEMINI_KEY = "AIzaSyTest-0123456789abcdefghijklmnopq";
+// Fake keys (shapes only), so secret scanners don't flag them.
+const GEMINI_KEY = "AQ.fake.key.for.server.tests.0000000";
 let segmentReply = { status: 200, body: { choices: [{ message: { content: "儘管前期人頭一直往下掉\n所以他的大樹" } }] } };
 const RELAY_KEY = "kltp_test_0123456789abcdefghijklmnopqrstuvwxyz";
 let relaySocketUrl = "wss://relay.test/api/rooms/abcdefghjkmn/host";
@@ -180,7 +181,8 @@ test("smart line breaks: the open phrase goes to the text model, its lines come 
 test("Gemini: the key is checked with Google, then tokens are locked to the session setup", async () => {
   const save = (apiKey) => call({ method: "POST", path: "/api/gemini/key", auth: true, headers: json, body: { apiKey } });
   assert.equal((await save("sk-not-a-gemini-key-000000000000")).status, 400);
-  const rejected = await save("AIzaSyWrong-0123456789abcdefghijklmnopq");
+  const rejected = await save("AQ.fake.wrong.key.for.server.tests.000");
+  assert.equal((await save("AIza.fake.old.key.for.server.tests.00")).status, 400, "a well-formed old key reaches Google, which rejects this one");
   assert.equal(rejected.status, 400);
   assert.match(rejected.json.error, /拒絕/);
   assert.equal((await call({ method: "POST", path: "/api/gemini/translation-token", auth: true, headers: json, body: {} })).status, 401);

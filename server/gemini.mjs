@@ -7,10 +7,12 @@ import { ValidationError, validateTranscriptionRequest, validateTranslationReque
 
 export const GEMINI = "https://generativelanguage.googleapis.com/v1beta";
 
+// AI Studio creates "auth keys" (AQ.…) since May 2026; older standard keys (AIza…) still work when
+// they're restricted. Both go in the x-goog-api-key header.
 export function validateGeminiKeyFormat(value) {
   const key = typeof value === "string" ? value.trim() : "";
-  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(key)) {
-    throw new ValidationError("Gemini API key 格式不正確，應以 AIza 開頭。");
+  if (!/^(AQ\.|AIza)[!-~]{20,}$/.test(key)) {
+    throw new ValidationError("Gemini API key 格式不正確，應以 AQ. 開頭（舊式金鑰以 AIza 開頭）。");
   }
   return key;
 }

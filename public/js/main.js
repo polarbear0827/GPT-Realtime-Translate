@@ -130,8 +130,9 @@ const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(DI
 // Which providers have a key in the backend (it never comes back to the page).
 const keys = { openai: false, gemini: false };
 const PROVIDERS = {
-  openai: { name: "OpenAI", placeholder: "sk-...", prefix: "sk-", source: "在 platform.openai.com/api-keys 建立金鑰。" },
-  gemini: { name: "Gemini", placeholder: "AIza...", prefix: "AIza", source: "在 Google AI Studio（aistudio.google.com/apikey）建立金鑰，免費方案就能試用。" },
+  openai: { name: "OpenAI", placeholder: "sk-...", prefix: ["sk-"], source: "在 platform.openai.com/api-keys 建立金鑰。" },
+  // AI Studio creates AQ.… keys; older restricted AIza… keys still work.
+  gemini: { name: "Gemini", placeholder: "AQ.Ab...", prefix: ["AQ.", "AIza"], source: "在 Google AI Studio（aistudio.google.com/apikey）建立金鑰，免費方案就能試用。" },
 };
 const hasKey = () => keys[settings.provider];
 let platformInfo = { supports: {} };
@@ -996,8 +997,8 @@ async function saveApiKey(event) {
   const key = els.apiKeyInput.value.trim();
   const providerName = settings.provider;
   const provider = PROVIDERS[providerName];
-  if (!key.startsWith(provider.prefix)) {
-    showKeyError(`請輸入有效的 ${provider.name} API key（以 ${provider.prefix} 開頭）。`);
+  if (!provider.prefix.some((prefix) => key.startsWith(prefix))) {
+    showKeyError(`請輸入有效的 ${provider.name} API key（以 ${provider.prefix[0]} 開頭）。`);
     return;
   }
   els.saveKeyBtn.disabled = true;

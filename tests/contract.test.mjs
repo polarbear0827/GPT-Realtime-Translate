@@ -86,7 +86,11 @@ const fixtures = [
   { kind: "segmentResponse", value: { error: { message: "nope" } } },
   { kind: "segment", body: { provider: "gemini", language: "zh", text: "所以他的大樹又快上線了", context: "有經濟差" } },
   { kind: "segment", body: { provider: "claude", language: "zh", text: "你好" } },
-  { kind: "geminiKey", value: "  AIzaSyA-0123456789abcdefghijklmnopqrstu  " },
+  // Obviously fake keys (shapes only), so secret scanners don't flag them.
+  { kind: "geminiKey", value: "  AQ.fake.key.for.contract.tests.000000  " },
+  { kind: "geminiKey", value: "AIza.fake.key.for.contract.tests.0000" },
+  { kind: "geminiKey", value: "AQ.short" },
+  { kind: "geminiKey", value: "AQ.fake.key with.a.space.000000000000" },
   { kind: "geminiKey", value: "sk-0123456789abcdefghijklmnopqrstuvwxyz" },
   { kind: "geminiKey", value: "AIzaShort" },
   { kind: "geminiTranslation", body: { targetLanguage: "zh" } },

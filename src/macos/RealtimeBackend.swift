@@ -257,10 +257,11 @@ struct GeminiRules {
     let rules: RealtimeRules
     var config: RealtimeConfig { rules.config }
 
+    // Auth keys (AQ.…) and older restricted standard keys (AIza…).
     static func validateKeyFormat(_ value: Any?) throws -> String {
         let key = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard key.range(of: "^AIza[0-9A-Za-z_-]{30,}$", options: .regularExpression) != nil else {
-            throw BackendError(status: 400, message: "Gemini API key 格式不正確，應以 AIza 開頭。")
+        guard key.range(of: "^(AQ\\.|AIza)[!-~]{20,}$", options: .regularExpression) != nil else {
+            throw BackendError(status: 400, message: "Gemini API key 格式不正確，應以 AQ. 開頭（舊式金鑰以 AIza 開頭）。")
         }
         return key
     }
